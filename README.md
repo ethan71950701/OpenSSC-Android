@@ -11,7 +11,7 @@ S25+ 只用來研究（取得協商資料、對照三星實作），不是目標
 |---|---|---|
 | 開源 SSC 編碼器（第三方，BSD-3）的抓取、編譯、一致性驗證 | 已在 Linux 虛擬機驗證：137 次測試 0 失敗 | `scripts/` |
 | 手機端編譯與自測（Termux） | 腳本已寫，**尚未在手機上跑** | `scripts/build-tool.sh` |
-| 手機蓝牙栈探測腳本（文字報告，不複製二進位檔） | 腳本已寫，**尚未在手機上跑** | `tools/probe-device.sh` |
+| 手機蓝牙栈探測腳本（文字報告，不複製二進位檔） | v1 已在小米 13 跑過；v2 修正了目標庫並遮蔽 MAC | `tools/probe-device.sh` |
 | 研究結論、已知事實與未知事項 | 見文件 | `docs/RESEARCH.md` |
 | 整合方案與需要做的事 | 設計稿 | `docs/ARCHITECTURE.md` |
 | Hook 的具體設計與目標函數 | 設計稿 | `docs/HOOK-DESIGN.md` |
