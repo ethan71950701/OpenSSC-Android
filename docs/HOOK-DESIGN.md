@@ -34,7 +34,13 @@ Buds  ◀─(SSC 設定: 75 00 00 00 / 03 01 / ??)──  [翻譯層] ◀─(Opu
 4. **第一版只做 48 kHz / 16 bit 的 SSC**（棧對 Opus 槽位只認 48 kHz / 16 bit，音訊 HAL 會照此送 PCM）。
    UHQ（96 kHz / 24 bit）要另外 hook 採樣率與位元深度的查詢，放到之後。
 
-翻譯層要掛在哪個函數上（AVDTP 訊息的解析 / 建構，或 `bta_av_co` 的 SEP 處理），要看 `avdt_*` / `bta_av_co_*` 的符號，**待查**。
+翻譯層的掛載點（符號已確認）：
+- **`avdt_msg_prs_cfg(AvdtpSepConfig*, uint8_t* p, uint16_t len, uint8_t* p_elem, uint8_t sig_id)`**（`0xa38614`）：
+  解析收到的能力與設定（Get Capabilities 回應、Set Configuration 命令都經過這裡）。在它解析完之後把 SSC 元素改寫成 Opus。
+- **`avdt_msg_bld_cfg(uint8_t**, AvdtpSepConfig*)`**（`0xa37e1c`）：建構要送出的設定（Set Configuration / Reconfigure）。在它建構之前把 Opus 元素改回 SSC。
+- 備用的上層掛載點：`bta_av_co_audio_getconfig`（`0x676678`）、`bta_av_co_audio_setconfig`（`0x678ad8`）、`bta_av_co_save_codec`（`0x67a1d4`）。
+
+轉換邏輯本身已寫成與平台無關的 `bridge/`（`sscb_peer_caps_to_opus`、`sscb_opus_config_to_ssc`），在 PC 上有單元測試。
 
 ## 3. 注入方式
 
@@ -91,8 +97,16 @@ Buds  ◀─(SSC 設定: 75 00 00 00 / 03 01 / ??)──  [翻譯層] ◀─(Opu
 
 | 項目 | 怎麼查 |
 |---|---|
-| AVDTP 收發與 `bta_av_co` 的符號（決定翻譯層掛在哪） | 手機上 `nm -C` 搜 `avdt_` / `bta_av_co` |
+| ~~AVDTP 收發與 `bta_av_co` 的符號~~ | 已確認：`avdt_msg_prs_cfg` / `avdt_msg_bld_cfg` |
 | 三星送給 Buds 的 SSC `Set Configuration` 位元組 | S25+ 的 btsnoop |
 | 選到 Opus 槽位時是否自動走軟體編碼（卸載仍開啟時） | 第一個原型實測 |
-| 裝置上可用的 Zygisk 實作 | 問使用者 / 看 KernelSU 模組清單 |
+| ~~裝置上可用的 Zygisk 實作~~ | 已確認：Zygisk Next 1.5.0（KernelSU 32680），zygote64 / zygote32 皆已注入 |
 | ShadowHook 能否解析 `.gnu_debugdata` 符號 | 原型實測 |
+
+## 6. 封包與 MTU
+
+- AVDTP 在每個媒體封包前加 12 位元組的 RTP 標頭；依上游說明（第三方），SSC 封包是「RTP + 1～2 幀」，沒有額外的 payload 標頭。
+- **論壇說的「MTU 1012 > 1005」可以由此推算出來**：96 kHz UHQ 886 kb/s 一幀 1000 位元組，加上 12 位元組 RTP 標頭正好是 1012，超過 1005。
+  這和「SSC 封包沒有額外標頭」的說法吻合（間接佐證，非直接驗證）。所以 96 kHz 在 1005 的 MTU 下最高只能用 584 kb/s（660 + 12）。
+- 48 kHz 模式 192 kb/s 一幀 484 位元組，一個封包可放 2 幀（980 ≤ 1005）。`bridge/` 的 `sscb_packer` 依 MTU 計算每包幀數，並以每幀 864 推進 RTP 時間戳。
+- 實際的 AVDTP 媒體 MTU 要在連線時從棧取得（`bta_av_co_audio_update_mtu`），不能寫死 1005。

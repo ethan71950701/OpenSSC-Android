@@ -10,7 +10,8 @@ S25+ 只用來研究（取得協商資料、對照三星實作），不是目標
 | 項目 | 狀態 | 位置 |
 |---|---|---|
 | 開源 SSC 編碼器（第三方，BSD-3）的抓取、編譯、一致性驗證 | 已在 Linux 虛擬機驗證：137 次測試 0 失敗 | `scripts/` |
-| 手機端編譯與自測（Termux） | 腳本已寫，**尚未在手機上跑** | `scripts/build-tool.sh` |
+| 手機端編譯與自測（Termux） | 已在小米 13（ARM64）通過：`SELFTEST PASSED` | `scripts/build-tool.sh` |
+| SSC↔Opus codec 資訊轉換與封包組裝（離線、可單元測試） | 已在 Linux 驗證：全部測試通過，含端對端編碼＋組包 | `bridge/`、`scripts/test-bridge.sh` |
 | 手機蓝牙栈探測腳本（文字報告，不複製二進位檔） | v1 已在小米 13 跑過；v2 修正了目標庫並遮蔽 MAC | `tools/probe-device.sh` |
 | 研究結論、已知事實與未知事項 | 見文件 | `docs/RESEARCH.md` |
 | 整合方案與需要做的事 | 設計稿 | `docs/ARCHITECTURE.md` |
@@ -22,6 +23,7 @@ S25+ 只用來研究（取得協商資料、對照三星實作），不是目標
 ```bash
 scripts/build-tool.sh          # 抓取上游 → 編譯 ssc_enc_tool → 自測（需要 git、C 編譯器）
 scripts/verify-encoder.sh      # 完整一致性測試（需要 cmake、python3）
+scripts/test-bridge.sh         # bridge/ 的單元測試（需要 cmake）
 sh tools/probe-device.sh       # 在手機的 Termux 裡執行，產生探測報告
 ```
 
