@@ -70,6 +70,9 @@ Android 的 A2DP 來源端流程是：
 - 這條路是否可行，取決於 `libbluetooth_jni.so` 有沒有可用的符號（導出符號或 `.gnu_debugdata` 的 MiniDebugInfo），以及 Opus 槽位能否在小米的棧裡被啟用。
   兩者都要在手機上實測（見 `docs/HANDOFF.md`）。
 
+**符號已確認（見 `docs/HOOK-DESIGN.md`）**：MiniDebugInfo 含 24,817 個符號，Opus 槽位的每個函數都有名稱與位址，Opus 槽位也已確認可以啟用。
+具體設計改為「在 AVDTP 邊界把 SSC 翻譯成 Opus，讓棧以為對方是 Opus；再把 Opus 編碼器換成 SSC」，詳見 `docs/HOOK-DESIGN.md`。
+
 ### D. KernelSU 模組（待確認）
 最終要打包成一個 KernelSU 模組（`module.prop` + 覆蓋檔案 + 開機腳本）。目前**不建立空殼**，等 C 的方案定案再做，避免留下不能用的樣板。
 

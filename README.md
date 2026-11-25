@@ -14,6 +14,7 @@ S25+ 只用來研究（取得協商資料、對照三星實作），不是目標
 | 手機蓝牙栈探測腳本（文字報告，不複製二進位檔） | 腳本已寫，**尚未在手機上跑** | `tools/probe-device.sh` |
 | 研究結論、已知事實與未知事項 | 見文件 | `docs/RESEARCH.md` |
 | 整合方案與需要做的事 | 設計稿 | `docs/ARCHITECTURE.md` |
+| Hook 的具體設計與目標函數 | 設計稿 | `docs/HOOK-DESIGN.md` |
 | 換到本機電腦後怎麼接手 | 逐步清單 | `docs/HANDOFF.md` |
 
 ## 快速開始（PC 或 Termux）
