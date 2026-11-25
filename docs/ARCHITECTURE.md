@@ -60,7 +60,15 @@ Android 的 A2DP 來源端流程是：
 - Buds 對小米已經回報 SSC 端點（能力位元組 `0x3E`），所以**協商端不需要任何 Buds 端的繞過**；缺的只有小米的棧認得並使用它。
 - 現在的 AAC 是 DSP 卸載編碼。SSC 只能軟體編碼，所以**必須關閉 A2DP 硬體卸載**，這是所有方案的前提，要先確認關閉後 Buds 仍能穩定連線。
 
-**目前傾向：先評估 C（或在棧內新增 vendor codec），其次 A；B 只當最後手段。** 這只是傾向，不是結論，要等 `libbluetooth_qti.so` 的內容。
+**再次更新（`libbluetooth_qti.so` 不存在；棧是小米閉源分支 `MiuiBluetooth`）：**
+- 方案 A 變成「用 AOSP 的 Android 17 蓝牙模組取代小米的分支」。小米分支的原始碼不公開，取代後會失去 LHDC、MIHC 等小米功能，
+  而且小米框架層的 codec type（19、20）可能和 AOSP 不相容。風險高，只作備案。
+- 方案 C 的最佳候選是 **Opus 這個槽位**：它是純軟體編碼、按幀送出、Media Codec 長度和 SSC 一樣都是 9，Buds 也不支援 Opus，佔用它不會損失任何東西。
+  但它**不是改幾個常數就能用**：設定位元組的意義不同、幀長 960 vs 864、碼率上限不同，解析、建構、編碼三個環節都要換掉。
+- 因此實際做法會是 **方案 B + C 的組合**：用 Zygisk/KernelSU 模組把一個共享庫注入蓝牙行程，hook Opus 槽位的
+  「解析 / 建構 codec info」「選擇設定」「編碼器 init / 送幀」等函數，換成 SSC 的實作（使用開源編碼器）。
+- 這條路是否可行，取決於 `libbluetooth_jni.so` 有沒有可用的符號（導出符號或 `.gnu_debugdata` 的 MiniDebugInfo），以及 Opus 槽位能否在小米的棧裡被啟用。
+  兩者都要在手機上實測（見 `docs/HANDOFF.md`）。
 
 ### D. KernelSU 模組（待確認）
 最終要打包成一個 KernelSU 模組（`module.prop` + 覆蓋檔案 + 開機腳本）。目前**不建立空殼**，等 C 的方案定案再做，避免留下不能用的樣板。

@@ -32,7 +32,30 @@
 - 蓝牙 APEX：`com.android.bt`，versionCode **370399999**（S25+ 是 361099999）。
 - APEX 的 `lib64/` 裡**沒有 `libbluetooth.so`**，只有 `libbluetooth_jni.so`（16,266,672 位元組）、Rust 庫與高通 HAL 庫。
   S25+ 的 A2DP 程式碼也在 `libbluetooth_jni.so` 裡，所以 v1 探測腳本去搜 `libbluetooth.so` 是我寫錯了目標（已在 v2 修正）。
-- `ro.bluetooth.library_name = libbluetooth_qti.so`：系統指定使用高通版本的蓝牙庫，**它的位置與內容還沒查到**。
+- `ro.bluetooth.library_name = libbluetooth_qti.so`，但**整個系統找不到這個檔案**（`/system`、`/system_ext`、`/vendor`、`/product`、`/odm` 都沒有），
+  只找到 `/vendor/lib*/libbluetooth_audio_session*.so`（音訊 HAL 的 session 庫）。這個屬性看起來是遺留設定。
+- **實際的蓝牙棧是 `/apex/com.android.bt/lib64/libbluetooth_jni.so`**，由小米的分支 **`packages/modules/MiuiBluetooth`** 編譯。
+  其中的 A2DP vendor codec 原始檔（來自字串）：
+  `a2dp_vendor_aptx(.cc/_encoder.cc)`、`a2dp_vendor_aptx_hd(.cc/_encoder.cc)`、`a2dp_vendor_ldac(.cc/_encoder.cc)`、
+  `a2dp_vendor_lhdcv2(.cc/_encoder.cc)`、`a2dp_vendor_lhdcv3(.cc/_encoder.cc)`、`a2dp_vendor_lhdcv5.cc`、
+  **`a2dp_vendor_opus.cc`**、`a2dp_vendor_opus_decoder.cc`。
+  函數字串包括 `A2DP_VendorSourceCodecIndex`、`A2DP_VendorInitCodecConfigLhdcV5`、`a2dp_vendor_opus_encoder_init`、`a2dp_vendor_opus_encoder_update` 等。
+  這些字串多半來自日誌格式（`__func__`），**不代表有導出符號**；是否被 strip 還要用 `readelf` / `nm` 確認。
+- Opus vendor codec 的程式碼在棧裡，但連線時的本機能力清單**沒有列出 Opus**，推測執行時被關閉。
+
+### AOSP 的 Opus vendor codec（來自 AOSP `packages/modules/Bluetooth` main 分支原始碼；小米的分支可能有改動）
+
+- `a2dp_vendor_opus_constants.h`：`A2DP_OPUS_CODEC_LEN 9`、vendor `0x000000E0`、codec `0x0001`；
+  設定位元組：聲道 mask `0x07`（MONO `0x01`、STEREO `0x02`、DUAL_MONO `0x04`）、幀長 mask `0x18`（10ms `0x08`、20ms `0x10`）、
+  採樣率 mask `0x80`（48 kHz）。預設 48 kHz、每幀 960 樣本、2 聲道。
+- **和 SSC 的形狀相同**：兩者的 Media Codec 長度都是 9（vendor ID 4 + codec ID 2 + **1 位元組**設定）。
+  但**位元意義不同**：SSC 的 `0x3E` 沒有 Opus 要求的 `0x80`（48 kHz）位元，Opus 的解析邏輯會直接拒絕它，所以不能只改 vendor / codec ID。
+- 編碼器直接呼叫 libopus（`opus_encoder_get_size`、`opus_encoder_init(48000, 2, OPUS_APPLICATION_AUDIO)`、`opus_encoder_ctl`、`opus_encode`），
+  每次 960 樣本（20 ms），每個封包一幀，送幀節奏由計時器決定。SSC 是每幀 864 樣本，節奏不同。
+- 碼率：`A2DP_VendorGetBitRateOpus` 回傳 256000（立體聲）。SSC 最高到 584k / 886k。
+- libopus 的連結方式（靜態或動態）在 AOSP 的 `libbt-stack` 只看到 include 路徑，**正式版的連結方式未確認**。
+- 執行時開關：`A2dpCodecs::init()` 讀 `persist.bluetooth.opus.enabled`（預設 false），且還要 `bluetooth::audio::a2dp::is_opus_supported()` 為真；
+  編譯時受 `EXCLUDE_NONSTANDARD_CODECS` 控制。小米的分支是否保留這些條件，要實測。
 - 音訊走 AIDL Bluetooth Audio HAL（`android.hardware.bluetooth.audio.IBluetoothAudioProviderFactory/default`，高通 `vendor.qti.hardware.bluetooth.audio-V1`）。
 - **A2DP 硬體卸載已啟用**：`ro.bluetooth.a2dp_offload.supported=true`、`persist.bluetooth.a2dp_offload.disabled=false`，
   卸載能力 `sbc-aptx-aptxtws-aptxhd-aac-ldac-aptxadaptiver2`；與 Buds 連線時日誌顯示 `Stream sink offloaded`，
