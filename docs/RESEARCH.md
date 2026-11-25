@@ -42,6 +42,12 @@
   函數字串包括 `A2DP_VendorSourceCodecIndex`、`A2DP_VendorInitCodecConfigLhdcV5`、`a2dp_vendor_opus_encoder_init`、`a2dp_vendor_opus_encoder_update` 等。
   這些字串多半來自日誌格式（`__func__`），**不代表有導出符號**；是否被 strip 還要用 `readelf` / `nm` 確認。
 - Opus vendor codec 的程式碼在棧裡，但連線時的本機能力清單**沒有列出 Opus**，推測執行時被關閉。
+- **符號情況（已驗證）**：`libbluetooth_jni.so` 的 `.dynsym` 只有 **2 個**已定義的導出符號，沒有 `.symtab`；
+  但有 **`.gnu_debugdata`**（MiniDebugInfo，檔案位移 `0xf0cb45`，大小 `0x76228` ≈ 484 KB，xz 壓縮）。
+  MiniDebugInfo 通常含內部函數名稱與位址，是 hook 方案能否成立的關鍵（內容待解開確認）。
+- 音訊策略設定檔：`/vendor/etc` 有 `audio_policy_configuration.xml`、`a2dp_audio_policy_configuration.xml`、
+  `bluetooth_qti_audio_policy_configuration.xml` 等，**沒有** `audio_policy_configuration_a2dp_offload_disabled.xml`。
+- `su -c 'logcat -d'` 讀到 **0 行**；之後開發需要日誌時改用電腦的 `adb logcat`。
 
 ### 小米 13 上的開關實測（已驗證）
 
