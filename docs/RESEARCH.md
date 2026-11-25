@@ -43,6 +43,17 @@
   這些字串多半來自日誌格式（`__func__`），**不代表有導出符號**；是否被 strip 還要用 `readelf` / `nm` 確認。
 - Opus vendor codec 的程式碼在棧裡，但連線時的本機能力清單**沒有列出 Opus**，推測執行時被關閉。
 
+### 小米 13 上的開關實測（已驗證）
+
+- **Opus 槽位可以啟用**：`setprop persist.bluetooth.opus.enabled true` 並重開機後，本機能力清單出現
+  `Opus`（codec type 6、優先度 1501、48 kHz / 16 bit / 立體聲），dumpsys 多了 `A2DP Opus State`。
+  也就是說小米的分支保留了這個開關，而且 `is_opus_supported()` 的檢查會通過。Buds 不支援 Opus，所以不會被選中。
+- **A2DP 硬體卸載被強制開啟**：`/vendor/etc/init/hw/init.qcom.rc:182` 有 `setprop persist.bluetooth.a2dp_offload.disabled false`，
+  每次開機都把它設回 false（所以開發者選項的開關是灰色的）。開機前用 `setprop` 設 true 沒有用。
+  好處是任何手動修改都會在重開機後自動恢復。
+- 小米的卸載能力清單 `persist.bluetooth.a2dp_offload.cap = sbc-aac-aptx-aptxhd-ldac-lhdc` **不含 Opus**。
+  選到 Opus 槽位時棧是否會自動改走軟體編碼，**尚未驗證**。
+
 ### AOSP 的 Opus vendor codec（來自 AOSP `packages/modules/Bluetooth` main 分支原始碼；小米的分支可能有改動）
 
 - `a2dp_vendor_opus_constants.h`：`A2DP_OPUS_CODEC_LEN 9`、vendor `0x000000E0`、codec `0x0001`；
