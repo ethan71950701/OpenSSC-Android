@@ -24,6 +24,56 @@
   - 功能開關字串：`A2DPSM-SSC HiFi 1st is disabled`、`btif_av_need_dual_play_for_ssc`
 - 結論：在三星的棧裡，SSC 是**標準的 A2DP vendor codec**（與 AOSP 的 LDAC / aptX 同型態），不是特殊握手。
 
+## 1b. 在小米 13 上實測到的事實（已驗證，來自探測報告與 btsnoop）
+
+裝置：2211133C（fuxi），SM8550（kalama），**Android 17 / SDK 37**，HyperOS `OS4.0.31.0.XEOCNXM`，安全更新 2026-09-05，核心 `5.15.194-android13-8`，KernelSU。
+
+**蓝牙棧**
+- 蓝牙 APEX：`com.android.bt`，versionCode **370399999**（S25+ 是 361099999）。
+- APEX 的 `lib64/` 裡**沒有 `libbluetooth.so`**，只有 `libbluetooth_jni.so`（16,266,672 位元組）、Rust 庫與高通 HAL 庫。
+  S25+ 的 A2DP 程式碼也在 `libbluetooth_jni.so` 裡，所以 v1 探測腳本去搜 `libbluetooth.so` 是我寫錯了目標（已在 v2 修正）。
+- `ro.bluetooth.library_name = libbluetooth_qti.so`：系統指定使用高通版本的蓝牙庫，**它的位置與內容還沒查到**。
+- 音訊走 AIDL Bluetooth Audio HAL（`android.hardware.bluetooth.audio.IBluetoothAudioProviderFactory/default`，高通 `vendor.qti.hardware.bluetooth.audio-V1`）。
+- **A2DP 硬體卸載已啟用**：`ro.bluetooth.a2dp_offload.supported=true`、`persist.bluetooth.a2dp_offload.disabled=false`，
+  卸載能力 `sbc-aptx-aptxtws-aptxhd-aac-ldac-aptxadaptiver2`；與 Buds 連線時日誌顯示 `Stream sink offloaded`，
+  也就是現在的 AAC 是 **DSP 編碼**。SSC 只能走軟體編碼，所以測試時必須先在開發者選項關閉「停用蓝牙 A2DP 硬體分流」那個選項（即關閉卸載）。
+- 這個蓝牙棧**已經支援多個 vendor codec**：本機能力清單有 aptX-adaptive（type 7）、LHDCv5（19）、LHDC_V3（13）、LHDC_V2（12）、LDAC（4）、
+  aptX-HD、aptX、AAC、SBC，以及小米自有的 **MIHC（type 20）**。codec type 已被擴充到 20，代表棧裡有現成的「新增 vendor codec」機制可參照。
+- 軟體 LDAC 編碼器來自 VNDK APEX（`libldacBT_enc.so`）；LHDC 在 `/vendor/lib64/lib_bt_lhdc.so`；aptX 在 `/vendor/lib64/lib_bt_aptx.so`。
+
+**與 Buds 3 Pro 的連線（Buds 連到小米 13）**
+- 目前 codec：**AAC**，44.1 kHz / 16 bit / 立體聲，VBR。可選 codec 只有 AAC 與 SBC。
+- 小米 13 上**沒有** `libScalable_Encoder.so`。
+
+**btsnoop 中的 SSC 能力（關鍵發現）**
+抓到的位元組（含前後文）：
+
+```
+11004300 320c 0100 0709 00ff 75000000 0301 3e 0800 ...
+```
+
+逐段解讀（依 AVDTP 結構，**是我手動解碼，建議再用 Wireshark 對照**）：
+
+| 位元組 | 意義 |
+|---|---|
+| `11 00` `43 00` | L2CAP 長度 17、頻道 0x0043（AVDTP 信令） |
+| `32 0c` | 交易 3、單一封包、**回應接受**、信號 `0x0C` = Get All Capabilities |
+| `01 00` | 服務類別 Media Transport |
+| `07 09` | 服務類別 **Media Codec**，長度 9 |
+| `00 ff` | 媒體類型 audio、codec 類型 `0xFF`（vendor） |
+| `75 00 00 00` | Vendor ID = `0x00000075`（Samsung） |
+| `03 01` | Codec ID = `0x0103`（SSC） |
+| **`3e`** | **vendor 專屬資訊，只有 1 位元組** |
+| `08 00` | 服務類別 Delay Reporting |
+
+結論：**Buds 3 Pro 對非三星的來源（小米 13）也回報了 SSC 端點**，能力位元組是 `0x3E`。
+依上游解碼器 README 的模式旗標（第三方，未驗證）：`0x20/0x10/0x08` = SSC、`0x04` = HiFi、`0x02` = UHQ v2、`0x80` = 舊版 UHQ，
+`0x3E` = 二進位 `0011 1110` = SSC + HiFi + UHQ v2 全部支援，與預期一致。
+目前小米的棧不認識這個 codec，所以選擇時被略過，只剩 AAC 與 SBC。
+
+**還需要確認**：Buds 對三星來源回報的位元組是否相同（需 S25+ 的 btsnoop）；`Set Configuration` 時三星手機實際送出的設定位元組
+（尤其選 UHQ 96 kHz / 24 bit 時），這才是我們要複製的格式。
+
 ## 2. 開源 SSC 編碼器（第三方，我們已在本機驗證可用）
 
 - 倉庫：https://github.com/WillyBilly06/samsung-ssc-encoder ，固定使用 commit `94f1896f1b80830554b0cc8deec47ab04130e19f`，BSD-3-Clause（部分源自 Opus 1.1 CELT，保留 Xiph.Org 版權聲明）。
@@ -60,8 +110,10 @@
 
 | 未知 | 怎麼查 | 影響 |
 |---|---|---|
-| 小米 13 的 HyperOS / Android 版本，蓝牙 APEX 名稱與版本 | `tools/probe-device.sh` | 決定要對哪一版 AOSP 蓝牙原始碼 |
-| 小米 13 的 `libbluetooth.so` 有沒有 `A2DP_Vendor*` 框架（LDAC / LHDC 等）、有沒有被 strip | 同上 | 決定走「改寫既有 vendor codec」還是「整個新增」 |
-| Buds 3 Pro 在 Get Capabilities 回報的 SSC 能力位元組長什麼樣 | S25+ 上的 btsnoop | A2DP codec info element 的精確格式 |
-| Buds 在非三星來源下是否仍會選 SSC | 實測 | 若不會，要另找原因（可能有額外協商） |
+| ~~小米 13 的 HyperOS / Android 版本、蓝牙 APEX~~ | 已查：Android 17、`com.android.bt` 370399999 | 要對應 Android 17 的 AOSP 蓝牙原始碼；能否取得待確認 |
+| `libbluetooth_qti.so` 在哪、裡面有沒有 `A2DP_Vendor*` / `a2dp_vendor_*` 框架 | `tools/probe-device.sh` v2（或手動 `find` + `grep`） | 決定走「改寫既有 vendor codec」還是「整個新增」 |
+| 小米的棧是否 strip 了符號（能不能 hook / 對照） | 同上 | 決定方案 B 是否可行 |
+| ~~Buds 3 Pro 的 SSC 能力位元組~~ | 已查：`0x3E`（見 1b） | — |
+| Buds 對三星來源的能力位元組、以及三星手機送出的 `Set Configuration` 位元組 | S25+ 上的 btsnoop | 精確的設定格式（模式旗標、採樣率位元） |
+| 關閉 A2DP 卸載後，Buds 是否能維持穩定的軟體編碼連線 | 小米 13 實測 | SSC 的必要前提 |
 | APEX 唯讀的繞過方式在小米 13 + KernelSU 上哪個可行 | 實測 | 決定部署方式 |

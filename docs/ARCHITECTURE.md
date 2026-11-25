@@ -51,8 +51,16 @@ Android 的 A2DP 來源端流程是：
 | **B. 二進位注入（hook）** | 以模組把共享庫注入蓝牙行程，hook 選碼與編碼流程 | 不需要整套 AOSP 環境 | 需要每個版本的偏移量；棧若被 strip 難度很高；非常脆弱 |
 | **C. 改寫既有 vendor codec** | 若小米 13 的棧已有 LDAC / LHDC 等，把其中一個的識別碼與編碼器換成 SSC | 工作量可能最小 | 只有在該棧確實有可改寫的 codec 且符號可用時才成立；會犧牲被取代的 codec |
 
-決策依據：探測報告裡 `libbluetooth.so` 有沒有 `A2DP_Vendor*` 與 `a2dp_vendor_*` 字串、有沒有被 strip、蓝牙 APEX 的版本。
-**目前傾向：先評估 C，其次 A；B 只當最後手段。** 這只是傾向，不是結論。
+決策依據：探測報告裡 `libbluetooth_jni.so` 與 `libbluetooth_qti.so`（`ro.bluetooth.library_name` 指定的高通版）有沒有 `A2DP_Vendor*` 與 `a2dp_vendor_*` 字串、有沒有被 strip、蓝牙 APEX 的版本。
+
+**小米 13 實測後的更新（見 `docs/RESEARCH.md` 1b）：**
+- 這台是 Android 17，蓝牙 APEX 是 `com.android.bt` 370399999，A2DP 程式碼預期在 `libbluetooth_jni.so`（與 S25+ 同型態），**不是** `libbluetooth.so`。
+- 小米的棧已有多個 vendor codec（LHDC V2/V3/V5、aptX-adaptive、LDAC）和自有的 MIHC（type 20），codec type 機制已被擴充過，
+  所以「新增一個 vendor codec」在這個棧裡有現成的做法可以參照，方案 C（改寫既有的）不一定需要。
+- Buds 對小米已經回報 SSC 端點（能力位元組 `0x3E`），所以**協商端不需要任何 Buds 端的繞過**；缺的只有小米的棧認得並使用它。
+- 現在的 AAC 是 DSP 卸載編碼。SSC 只能軟體編碼，所以**必須關閉 A2DP 硬體卸載**，這是所有方案的前提，要先確認關閉後 Buds 仍能穩定連線。
+
+**目前傾向：先評估 C（或在棧內新增 vendor codec），其次 A；B 只當最後手段。** 這只是傾向，不是結論，要等 `libbluetooth_qti.so` 的內容。
 
 ### D. KernelSU 模組（待確認）
 最終要打包成一個 KernelSU 模組（`module.prop` + 覆蓋檔案 + 開機腳本）。目前**不建立空殼**，等 C 的方案定案再做，避免留下不能用的樣板。
