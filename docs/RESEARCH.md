@@ -51,6 +51,13 @@
 - **A2DP 硬體卸載被強制開啟**：`/vendor/etc/init/hw/init.qcom.rc:182` 有 `setprop persist.bluetooth.a2dp_offload.disabled false`，
   每次開機都把它設回 false（所以開發者選項的開關是灰色的）。開機前用 `setprop` 設 true 沒有用。
   好處是任何手動修改都會在重開機後自動恢復。
+- **執行中全域關閉卸載：棧切換成功，但沒有聲音。** 步驟：`setprop persist.bluetooth.a2dp_offload.disabled true` →
+  `svc bluetooth disable` → `killall audioserver` → `svc bluetooth enable`。結果 `A2dpOffloadEnabled: false`、
+  沒有 `Stream sink offloaded`、codec 仍是 AAC，但 Buds 無聲。
+  `audioserver` 與 `android.hardware.audio.service_64` 的 PID 連號，表示**音訊 HAL 也一起重啟了**，排除「HAL 沒重啟」。
+  音訊策略中 `BT A2DP Out` 存在且已連線。推測小米沒有提供全域關閉卸載時的軟體 A2DP 路線（未驗證）。
+  `logcat -d` 經 `su` 讀取時沒有任何 A2DP 相關輸出，日誌是否可讀待確認。重開機後恢復正常。
+- **結論：不再追全域關閉卸載**，改為確認 SSC 走 Opus 槽位時是否自動走軟體路線。
 - 小米的卸載能力清單 `persist.bluetooth.a2dp_offload.cap = sbc-aac-aptx-aptxhd-ldac-lhdc` **不含 Opus**。
   選到 Opus 槽位時棧是否會自動改走軟體編碼，**尚未驗證**。
 
