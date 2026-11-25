@@ -3,7 +3,8 @@
 目標：讓 **Xiaomi 13（HyperOS，KernelSU root）** 透過 A2DP 以 **SSC（Samsung Scalable / Seamless Codec）** 連接 **Galaxy Buds 3 Pro**。
 S25+ 只用來研究（取得協商資料、對照三星實作），不是目標裝置。
 
-> 狀態：**研究與工具階段**。蓝牙栈整合尚未開始，因為還缺小米 13 蓝牙栈的實測資料（見 `docs/HANDOFF.md`）。
+> 狀態：**設計已定，離線元件完成**。小米 13 的蓝牙棧已分析完（Opus 槽位可用、符號齊全，見 `docs/HOOK-DESIGN.md`），
+> 轉換與組包的 `bridge/` 已有單元測試。注入蓝牙行程的部分尚未開始；還缺三星手機送給 Buds 的 SSC 設定位元組（需 S25+ 抓包）。
 
 ## 目前有什麼
 
