@@ -13,7 +13,7 @@
 | SSC ↔ Opus 轉換與封包組裝（`bridge/`） | ✅ 完成並有單元測試，輸出與 S25+ 實際送出的位元組逐一相同 |
 | 整合設計 | ✅ 定案，見 `docs/HOOK-DESIGN.md` |
 | **在小米 13 蓝牙行程內的整合模組** | ❌ **尚未開始，這是剩下的工作** |
-| 驗收工具 | ✅ `tools/check-ssc-capture.sh`（分析 btsnoop；尚未用真實紀錄測過） |
+| 驗收工具 | ✅ `tools/check-ssc-capture.sh`（分析 btsnoop；已在 S25+ 的真實紀錄上驗證） |
 
 ## 2. 已驗證的關鍵事實
 
@@ -49,6 +49,7 @@
 
 ### 驗收標準（依序）
 1. **協商**：在小米 13 上抓 btsnoop，`sh tools/check-ssc-capture.sh <紀錄>` 應看到 `ELEMENT 3e` 之後出現 `ELEMENT 0c`。
+   參考：S25+ 的紀錄跑出來是 `ELEMENT 3e` → `ELEMENT 0c` → `ELEMENT 0a`（`rate e3` ×437）→ `ELEMENT 0c`（`rate f3` ×463）→ … → `ELEMENT 0c`（`rate f3` ×1979）。
 2. **串流**：`ELEMENT 0c` 之後出現大量 `rate f3`（192 kb/s）。
 3. **系統狀態**：`dumpsys bluetooth_manager` 顯示目前 codec 為 Opus（棧內部看到的名稱），且沒有新的 `Stream sink offloaded`。
 4. **聽感**：Buds 有正常聲音，連續播放 5 分鐘以上不斷線、不爆音。
@@ -134,5 +135,5 @@ su -c 'dumpsys bluetooth_manager' | grep -iE 'OffloadEnabled|Current Codec|sink 
 | `bridge/` | SSC ↔ Opus 轉換、封包組裝與測試 |
 | `scripts/` | 抓取 / 編譯 / 測試開源編碼器與 `bridge/` |
 | `tools/probe-device.sh` | 手機蓝牙棧探測（文字報告） |
-| `tools/check-ssc-capture.sh` | 從 btsnoop 列出 SSC 協商與碼率（驗收用） |
+| `tools/check-ssc-capture.sh` | 從 btsnoop 列出 SSC 協商與碼率（驗收用）；S25+ 參考輸出見 `docs/RESEARCH.md` 1b |
 | `research/` | 報告與筆記；`research/private/` 不進版控 |

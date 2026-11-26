@@ -16,7 +16,7 @@ S25+ 只用來研究（取得協商資料、對照三星實作），不是目標
 | 手機端編譯與自測（Termux） | 已在小米 13（ARM64）通過：`SELFTEST PASSED` | `scripts/build-tool.sh` |
 | SSC↔Opus codec 資訊轉換與封包組裝（離線、可單元測試） | 已在 Linux 驗證：全部測試通過，含端對端編碼＋組包 | `bridge/`、`scripts/test-bridge.sh` |
 | 手機蓝牙栈探測腳本（文字報告，不複製二進位檔） | v1 已在小米 13 跑過；v2 修正了目標庫並遮蔽 MAC | `tools/probe-device.sh` |
-| btsnoop 的 SSC 協商與碼率分析（驗收用） | 已寫好，尚未用真實紀錄測試 | `tools/check-ssc-capture.sh` |
+| btsnoop 的 SSC 協商與碼率分析（驗收用） | 已在 S25+ 的真實紀錄上驗證，輸出與手動分析一致 | `tools/check-ssc-capture.sh` |
 | 研究結論、已知事實與未知事項 | 見文件 | `docs/RESEARCH.md` |
 | **接手指南：現況、剩下的工作、驗收標準、救援** | 入口文件 | `docs/HANDOFF.md` |
 | 目前定案的整合設計與目標函數 | 設計 | `docs/HOOK-DESIGN.md` |
