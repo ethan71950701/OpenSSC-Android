@@ -118,8 +118,20 @@
 `0x3E` = 二進位 `0011 1110` = SSC + HiFi + UHQ v2 全部支援，與預期一致。
 目前小米的棧不認識這個 codec，所以選擇時被略過，只剩 AAC 與 SBC。
 
-**還需要確認**：Buds 對三星來源回報的位元組是否相同（需 S25+ 的 btsnoop）；`Set Configuration` 時三星手機實際送出的設定位元組
-（尤其選 UHQ 96 kHz / 24 bit 時），這才是我們要複製的格式。
+**S25+ 的 btsnoop（已取得，`/data/log/bt/btsnoop_hci.log`）**
+
+| 訊息 | 方向 | SSC 位元組 |
+|---|---|---|
+| Get All Capabilities 回應（`32 0c`） | Buds → S25+ | `3e`（**與對小米回報的相同**） |
+| Set Configuration（`40 03`，ACP SEID 3，INT SEID 5，含 Delay Reporting） | S25+ → Buds | **`0c`** |
+| Reconfigure（`60 05`，ACP SEID 3） | S25+ → Buds | **`0a`** |
+| Reconfigure（`90 05`，ACP SEID 3） | S25+ → Buds | **`0c`** |
+
+同一份紀錄中，SSC 幀頭的碼率代碼統計：`f3`（192k）2448 次、`e3`（584k）438 次，其他代碼皆為個位數（推測是誤匹配）。
+
+初步解讀（依上游旗標說明，**順序關聯待確認**）：`0x0c = 0x08|0x04` → HiFi 48 kHz / 24 bit（192 kb/s）；
+`0x0a = 0x08|0x02` → UHQ 96 kHz / 24 bit（584 kb/s）。UHQ 關閉時三星用的是 HiFi，而不是 16 bit 的標準 SSC。
+若成立，`0x0c` 就是第一版（48 kHz、192 kb/s、一包 2 幀）要送出的設定位元組。
 
 ## 2. 開源 SSC 編碼器（第三方，我們已在本機驗證可用）
 
