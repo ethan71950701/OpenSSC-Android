@@ -8,3 +8,6 @@
 int guard_begin(const char *path);
 /* Resets the count after a run survived. Returns 0 on success. */
 int guard_success(const char *path);
+
+/* Current count without changing it: 0 if the file is missing, -1 if unreadable. */
+int guard_count(const char *path);

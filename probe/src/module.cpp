@@ -1,6 +1,8 @@
-/* OpenSSC probe (stage 1): runs inside com.android.bluetooth only, waits for the Bluetooth stack
- * library, looks up the functions the hook design needs and writes a report. It installs no hooks,
- * sets no properties and changes no Bluetooth data. */
+/* OpenSSC probe (stage 2): runs inside com.android.bluetooth only, waits for the Bluetooth stack
+ * library, looks up the functions the hook design needs and writes a report. When every required
+ * function is found it installs log-only hooks (see hooks.cpp): they call the original function with
+ * the original arguments and return its result unchanged. It sets no properties and changes no
+ * Bluetooth data. */
 #include <android/log.h>
 #include <elf.h>
 #include <fcntl.h>
@@ -14,17 +16,20 @@
 #include <unistd.h>
 
 #include "guard.h"
+#include "hooks.h"
 #include "symres.h"
 #include "zygisk.hpp"
 
 #define TAG "OpenSSCProbe"
-#define VERSION "0.1"
+#define VERSION "0.2"
 #define TARGET_PROCESS "com.android.bluetooth"
 #define TARGET_UID 1002
 #define TARGET_LIB "libbluetooth_jni.so"
 #define DATA_DIR "/data/user_de/0/com.android.bluetooth"
 #define STATE_FILE DATA_DIR "/openssc_probe_state"
 #define REPORT_FILE DATA_DIR "/openssc_probe_report.txt"
+#define HOOKLOG_FILE DATA_DIR "/openssc_probe_hooklog.txt"
+#define STREAM_STATE_FILE DATA_DIR "/openssc_probe_stream_state"
 #define WAIT_SECONDS 120
 #define SURVIVE_SECONDS 60
 
@@ -71,6 +76,7 @@ static sr_target g_targets[] = {
 #define TARGET_COUNT (sizeof(g_targets) / sizeof(g_targets[0]))
 
 static int g_report_fd = -1;
+static bool g_hooks_allowed = false; /* set in preAppSpecialize, read by the probe thread */
 
 __attribute__((format(printf, 1, 2))) static void out(const char *fmt, ...) {
     char line[640];
@@ -134,7 +140,7 @@ static int in_exec_segment(const lib_info &li, uint64_t vaddr) {
     return 0;
 }
 
-static void resolve(const lib_info &li) {
+static bool resolve(const lib_info &li) {
     out("library: %s", li.path);
     print_build_id(li);
 
@@ -143,20 +149,20 @@ static void resolve(const lib_info &li) {
     if (fd < 0 || fstat(fd, &st) != 0 || st.st_size <= 0) {
         out("RESULT: FAIL cannot open library file");
         if (fd >= 0) close(fd);
-        return;
+        return false;
     }
     size_t len = static_cast<size_t>(st.st_size);
     void *map = mmap(nullptr, len, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (map == MAP_FAILED) {
         out("RESULT: FAIL mmap");
-        return;
+        return false;
     }
     int rc = sr_scan(static_cast<const uint8_t *>(map), len, g_targets, TARGET_COUNT);
     munmap(map, len);
     if (rc != SR_OK) {
         out("RESULT: FAIL symbol scan error %d", rc);
-        return;
+        return false;
     }
 
     int required = 0, required_ok = 0, found = 0;
@@ -180,6 +186,7 @@ static void resolve(const lib_info &li) {
     }
     out("RESULT: %s required=%d/%d all=%d/%zu", required_ok == required ? "PASS" : "INCOMPLETE", required_ok,
         required, found, TARGET_COUNT);
+    return required_ok == required;
 }
 
 static void *probe_thread(void *) {
@@ -190,14 +197,25 @@ static void *probe_thread(void *) {
         waited++;
     }
     g_report_fd = open(REPORT_FILE, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-    out("OpenSSC probe %s, pid %d (no hooks installed)", VERSION, getpid());
+    out("OpenSSC probe %s, pid %d", VERSION, getpid());
     if (g_report_fd < 0) out("warning: cannot write report file, logcat only");
+    bool pass = false;
     if (li.path[0])
-        resolve(li);
+        pass = resolve(li);
     else
         out("RESULT: FAIL %s not loaded after %d s", TARGET_LIB, WAIT_SECONDS);
     if (g_report_fd >= 0) close(g_report_fd);
     g_report_fd = -1;
+
+    if (!pass)
+        __android_log_write(ANDROID_LOG_INFO, TAG, "hooks: not installed (symbol report is not PASS)");
+    else if (!g_hooks_allowed)
+        __android_log_write(ANDROID_LOG_INFO, TAG, "hooks: not installed (disable_hooks file present)");
+    else if (guard_count(STREAM_STATE_FILE) < 0 || guard_count(STREAM_STATE_FILE) >= GUARD_LIMIT)
+        __android_log_write(ANDROID_LOG_WARN, TAG,
+                            "hooks: not installed (stream crash limit reached or state unreadable)");
+    else
+        hooks_install(li.bias, g_targets, TARGET_COUNT, HOOKLOG_FILE, STREAM_STATE_FILE);
 
     sleep(SURVIVE_SECONDS);
     if (guard_success(STATE_FILE) == 0)
@@ -228,6 +246,7 @@ public:
                 __android_log_write(ANDROID_LOG_WARN, TAG, "disabled by disable_probe (or no module dir)");
                 target = false;
             }
+            g_hooks_allowed = dir >= 0 && faccessat(dir, "disable_hooks", F_OK, 0) != 0;
             if (dir >= 0) close(dir);
         }
         if (!target) api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);

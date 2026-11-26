@@ -38,3 +38,5 @@ int guard_begin(const char *path) {
 }
 
 int guard_success(const char *path) { return write_count(path, 0); }
+
+int guard_count(const char *path) { return read_count(path); }
