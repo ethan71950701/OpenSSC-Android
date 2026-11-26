@@ -11,6 +11,9 @@
  * (no audio packet is sent). Off (default): hooks only log. */
 void hooks_set_translate(int on);
 
+/* Translate mode only: 1 (default) sends real SSC audio while an SSC configuration is active, 0 keeps muting. */
+void hooks_set_ssc_audio(int on);
+
 /* Call before hooks_install (translate mode). Remembers across restarts that an SSC peer exists: a sighting
  * younger than 24 h arms AAC hiding at once, which a fresh connection needs because the AAC capability list is
  * fetched before the SSC one. */

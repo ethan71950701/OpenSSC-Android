@@ -169,3 +169,10 @@ tests/run.sh
 - 0.3.5：把「看過 SSC 耳機」記在 `openssc_probe_ssc_seen`（24 小時內有效）。藍牙程序重啟後第一次連線就隱藏 AAC，因為 Buds 的 AAC 能力比 SSC 先被讀到。
 - 0.3.6：translate 模式下，擋下上層在 Opus 被選中約 9 秒後送來的「停用 Opus」請求（`A2dpCodecs::setCodecUserConfig`，type 6、priority -1），日誌記 `TRANSLATE blocked`。安裝時會保留舊版的 `enable_translate` 和 `diag_targets.txt`。
 - 實測（全軟體路徑，見 `audiopolicy-module/README.md`）：Opus 槽維持住，串流開始，`opus_send_frames` 每 20 ms 一次（目前靜音）。下一步 0.4 在這裡換成真正的 SSC 編碼。
+
+## 0.4.x：真正的 SSC 音訊
+
+- 0.4.0：translate 模式下 SSC 設定生效時，`opus_send_frames` 不再靜音，改由 `ssc_sender` 讀取 48 kHz PCM，用開源編碼器（`third_party/samsung-ssc-encoder`，由 `scripts/fetch-upstream.sh` 下載）編成 192 kb/s 的 SSC 幀，照 Opus 編碼器的方式（`osi_malloc` 的 BT_HDR、時間戳放在 data[0..3]）交給協定堆疊；`A2DP_VendorBuildCodecHeader` 不加額外標頭。模組目錄放 `ssc_mute` 檔可恢復靜音。
+- 0.4.1：每 100 個 tick 記一行音量軌跡（`SSC level`），用來區分音源斷音與傳輸斷音。
+- 0.4.2：實驗用設定檔 `ssc_fpp`（每包幀數）和 `ssc_ts_step`（每幀 RTP 時間戳步進），只在藍牙程序啟動時讀取。
+- 0.4.3：**預設每包 1 幀。** 在小米 13 + Galaxy Buds 3 Pro 上，每包 2 幀會規律斷音（約響 0.7 秒、停 1.5 秒）；每包 1 幀（時間戳步進 864）播放正常（已驗證，連續約 2 分鐘）。

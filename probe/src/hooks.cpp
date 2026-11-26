@@ -11,6 +11,7 @@
 #include <time.h>
 
 #include "shadowhook.h"
+#include "ssc_sender.h"
 #include "translate.h"
 
 #define TAG "OpenSSCProbe"
@@ -31,6 +32,12 @@ static volatile long g_caps_seen_at; /* CLOCK_MONOTONIC seconds of the last SSC 
 #define CONFIG_WINDOW_S 1800         /* capability exchange happens at connect; a codec change picked later (developer options) still needs it */
 
 void hooks_set_translate(int on) { g_translate = on; }
+
+/* 0.4: while an SSC configuration is active, send real SSC audio instead of muting (unless ssc_mute exists). */
+static volatile int g_ssc_audio = 1;
+static volatile int g_ssc_streaming; /* sender started for the current stream */
+static sscs_alloc_fn g_osi_malloc;   /* the stack's allocator: the stack frees our packets with osi_free */
+void hooks_set_ssc_audio(int on) { g_ssc_audio = on; }
 
 static long mono_s(void) {
     struct timespec ts;
@@ -205,20 +212,50 @@ static void h_init(const void *peer, void *cfg, void *read_cb, void *enq_cb) {
         g_stream_armed = 1;
     }
     o_init(peer, cfg, read_cb, enq_cb);
+    g_ssc_streaming = 0;
+    if (g_translate && g_ssc_active && g_ssc_audio) {
+        uint16_t mtu = pp ? (uint16_t)(pp[2] | (pp[3] << 8)) : 0;
+        int r = g_osi_malloc ? sscs_start(reinterpret_cast<sscs_read_fn>(read_cb), reinterpret_cast<sscs_enqueue_fn>(enq_cb),
+                                         g_osi_malloc, mtu)
+                             : -9;
+        if (r > 0) {
+            g_ssc_streaming = 1;
+            sscs_stats st;
+            sscs_get_stats(&st);
+            hlog("SSC audio ON: %d kb/s, frame %d bytes, %d frames per packet, ts step %d, mtu %u", SSCS_BITRATE / 1000,
+                 st.frame_bytes, st.frames_per_packet, st.ts_step, mtu);
+        } else {
+            hlog("SSC audio not started (%d): frames stay muted", r);
+        }
+    }
+}
+
+static void log_ssc_stats(const char *when) {
+    sscs_stats st;
+    sscs_get_stats(&st);
+    hlog("SSC %s: ticks=%u frames=%u packets=%u underflows=%u enqueue_failed=%u", when, st.ticks, st.frames, st.packets,
+         st.underflows, st.enqueue_failed);
 }
 
 static void h_cleanup(void) {
     unsigned sends = __atomic_load_n(&g_sends, __ATOMIC_RELAXED);
     hlog("opus_encoder_cleanup (frames sent since init: %u)", sends);
+    if (g_ssc_streaming) {
+        g_ssc_streaming = 0;
+        sscs_stop();
+        log_ssc_stats("stream end");
+    }
     o_cleanup();
     if (sends > 0) stream_ok();
 }
 static void h_reset(void) {
     hlog("opus_feeding_reset");
+    if (g_ssc_streaming) sscs_reset();
     o_reset();
 }
 static void h_flush(void) {
     hlog("opus_feeding_flush");
+    if (g_ssc_streaming) sscs_reset();
     o_flush();
 }
 static uint64_t h_interval(void) {
@@ -229,9 +266,24 @@ static uint64_t h_interval(void) {
 }
 static void h_send(uint64_t ts) {
     unsigned n = __atomic_fetch_add(&g_sends, 1, __ATOMIC_RELAXED) + 1;
-    int muted = g_translate && g_ssc_active;
-    if (n <= 3 || n % 500 == 0) hlog("opus_send_frames #%u ts=%llu%s", n, (unsigned long long)ts, muted ? " MUTED (original not called)" : "");
-    if (!muted) o_send(ts);
+    int ssc = g_translate && g_ssc_active;
+    if (ssc && g_ssc_streaming) {
+        int k = sscs_tick(ts);
+        /* every 100 ticks (2 s): input level per frame, so gaps can be placed before or after the encoder */
+        if (n % 100 == 0 && n <= 3000) {
+            char tr[128];
+            sscs_take_trace(tr, sizeof tr);
+            hlog("SSC level #%u [%s]", n, tr);
+        }
+        if (n <= 3 || n % 500 == 0) {
+            hlog("opus_send_frames #%u ts=%llu SSC sent %d packet(s)", n, (unsigned long long)ts, k);
+            log_ssc_stats("running");
+        }
+    } else {
+        if (n <= 3 || n % 500 == 0)
+            hlog("opus_send_frames #%u ts=%llu%s", n, (unsigned long long)ts, ssc ? " MUTED (original not called)" : "");
+        if (!ssc) o_send(ts);
+    }
     if (n == STREAM_OK_SENDS) stream_ok();
 }
 /* bool A2dpCodecs::setCodecUserConfig(const btav_a2dp_codec_config_t& cfg, peer_params*, peer_caps*, result*,
@@ -260,6 +312,16 @@ static uintptr_t h_ucfg(uintptr_t self, uintptr_t cfg, uintptr_t a2, uintptr_t a
     return r;
 }
 
+/* bool A2DP_VendorBuildCodecHeader(const uint8_t* codec_info, BT_HDR* p_buf, uint16_t frames). For Opus it prepends a
+ * 1-byte media payload header; SSC packets carry frames only (S25+ capture: 12 + 2 x 484 = 980), so skip it. */
+typedef uintptr_t (*bhdr_t)(const uint8_t *, void *, uint16_t);
+static bhdr_t o_bhdr;
+static uintptr_t h_bhdr(const uint8_t *info, void *buf, uint16_t frames) {
+    if (g_ssc_streaming && info && info[2] == 0xff && info[3] == 0xe0 && info[4] == 0 && info[5] == 0 && info[6] == 0)
+        return 1;
+    return o_bhdr(info, buf, frames);
+}
+
 static void h_mtu(uintptr_t handle, const void *addr, uint16_t mtu) {
     hlog("bta_av_co_audio_update_mtu mtu=%u", mtu); /* address deliberately not logged */
     o_mtu(handle, addr, mtu);
@@ -286,6 +348,7 @@ static hook_def g_defs[] = {
     {"a2dp_vendor_opus_send_frames", 1, (void *)h_send, (void **)&o_send, nullptr},
     {"bta_av_co_audio_update_mtu", 0, (void *)h_mtu, (void **)&o_mtu, nullptr},
     {"A2dpCodecs::setCodecUserConfig", 0, (void *)h_ucfg, (void **)&o_ucfg, nullptr},
+    {"A2DP_VendorBuildCodecHeader", 0, (void *)h_bhdr, (void **)&o_bhdr, nullptr},
 };
 #define DEF_COUNT (sizeof(g_defs) / sizeof(g_defs[0]))
 
@@ -324,6 +387,12 @@ int hooks_install(uintptr_t bias, const sr_target *targets, size_t count, const 
             continue;
         }
         addr[i] = bias + (uintptr_t)t->match[0].value;
+    }
+
+    {
+        const sr_target *m = find_target(targets, count, "osi_malloc");
+        g_osi_malloc = m && m->matches == 1 ? reinterpret_cast<sscs_alloc_fn>(bias + (uintptr_t)m->match[0].value) : nullptr;
+        if (!g_osi_malloc) hlog("hooks: osi_malloc not resolved, SSC audio unavailable (frames stay muted)");
     }
 
     int rc = shadowhook_init(SHADOWHOOK_MODE_UNIQUE, true) /* debuggable: ShadowHook logs to logcat (tag "shadowhook") */;

@@ -23,6 +23,12 @@ fi
 # A2DP would be routed to the software module while the stack waits on the DSP, and nothing would play.
 # Persistent properties are loaded after post-fs-data, so read the stored value from the property file.
 PP="${OPENSSC_PP:-/data/property/persistent_properties}"
+# Something on this phone writes the stored value back to false after boot, so the module owns it:
+# set it to true here (before Bluetooth starts), re-check after boot in service.sh, set false in uninstall.sh.
+RP=/data/adb/ksu/bin/resetprop
+if [ -x "$RP" ] && [ ! -f "$MODDIR/no_prop" ]; then
+  "$RP" -p persist.bluetooth.a2dp_offload.disabled true && echo "set persist.bluetooth.a2dp_offload.disabled=true" >> "$LOG"
+fi
 # Prefer KernelSU's resetprop -p (reads the stored value); fall back to scanning the protobuf file
 # (name, then 0x12 <len>, then the value).
 RP=/data/adb/ksu/bin/resetprop

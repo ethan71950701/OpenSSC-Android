@@ -34,7 +34,15 @@ for f in "$SH"/*.c "$SH"/arch/arm64/*.c "$SH"/arch/arm64/*.S "$SH"/common/*.c "$
 done
 "$CC" "${CFLAGS[@]}" -c "$ROOT/src/clear_cache.c" -o "$OBJ/clear_cache.o"
 "$CC" "${CFLAGS[@]}" -c "$ROOT/../bridge/src/ssc_bridge.c" -o "$OBJ/ssc_bridge.o"
-for f in module symres guard hooks translate diag; do
+# Open-source SSC encoder (BSD-3-Clause), fetched at a pinned commit by scripts/fetch-upstream.sh (git-ignored).
+ENC="$ROOT/../third_party/samsung-ssc-encoder"
+[ -f "$ENC/include/ssc_encoder.h" ] || "$ROOT/../scripts/fetch-upstream.sh" "$ENC"
+for f in "$ENC"/src/*.c; do
+  "$CC" "${TGT[@]}" "${XINC[@]}" -std=c99 -O2 -fPIC -fvisibility=hidden -ffunction-sections -fdata-sections -w \
+    -I"$ENC/include" -I"$ENC/src" -c "$f" -o "$OBJ/enc_$(basename "$f").o"
+done
+CFLAGS+=(-I"$ENC/include")
+for f in module symres guard hooks translate diag ssc_sender; do
   "$CXX" "${CFLAGS[@]}" -std=c++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics \
     -Wno-missing-field-initializers -c "$ROOT/src/$f.cpp" -o "$OBJ/$f.o"
 done
@@ -57,6 +65,7 @@ fi
 cp "$ROOT"/module/* "$STAGE/"
 cp "$ROOT/third_party/README.txt" "$STAGE/THIRD_PARTY.txt"
 cp "$ROOT/third_party/shadowhook/LICENSE" "$STAGE/LICENSE.shadowhook.txt"
+cp "$ENC/LICENSE" "$STAGE/LICENSE.ssc-encoder.txt"
 # Windows checkouts with core.autocrlf turn these into CRLF, which breaks sh and module.prop on Android.
 sed -i 's/\r$//' "$STAGE"/*.sh "$STAGE"/*.prop "$STAGE"/*.txt
 V="$(sed -n 's/^version=//p' "$ROOT/module/module.prop")"

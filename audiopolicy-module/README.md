@@ -19,6 +19,17 @@
 - 連續兩次開機沒完成就自動停用。
 - 結果寫在模組資料夾的 `status.txt`。
 
+## 0.3：模組自己管理 offload 屬性
+
+實測發現這支手機開機後會把已儲存的 `persist.bluetooth.a2dp_offload.disabled` 改回 `false`。0.3 起：
+
+- post-fs-data（藍牙啟動前）用 `resetprop -p` 設成 `true`；
+- service.sh 開機後 10 分鐘內每 30 秒檢查一次，被改回就設回 `true`，並把時間記在 `status.txt`；
+- 在 KernelSU 移除模組時，`uninstall.sh` 會設回 `false`。
+- 放一個 `no_prop` 檔可以關掉這個行為。
+
+只「停用」（不是移除）模組時，屬性可能還是 `true`，請照下面的救回步驟手動設回 `false`。
+
 ## 開啟 / 救回
 
 ```
