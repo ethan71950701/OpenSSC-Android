@@ -1,0 +1,6 @@
+id=openssc_probe
+name=OpenSSC Probe
+version=0.1
+versionCode=1
+author=OpenSSC
+description=Stage 1: reports whether the Bluetooth stack functions can be found. No hooks.

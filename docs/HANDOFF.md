@@ -13,6 +13,7 @@
 | SSC ↔ Opus 轉換與封包組裝（`bridge/`） | ✅ 完成並有單元測試，輸出與 S25+ 實際送出的位元組逐一相同 |
 | 整合設計 | ✅ 定案，見 `docs/HOOK-DESIGN.md` |
 | **在小米 13 蓝牙行程內的整合模組** | ❌ **尚未開始，這是剩下的工作** |
+| 探測模組 0.1（只查找函數、寫報告，不掛 hook） | ⚠️ 已編譯並通過 Linux 測試，**尚未實機驗證**；見 `probe/HANDOFF-CLAUDE-CODE.md` |
 | 驗收工具 | ✅ `tools/check-ssc-capture.sh`（分析 btsnoop；已在 S25+ 的真實紀錄上驗證） |
 
 ## 2. 已驗證的關鍵事實
@@ -133,6 +134,7 @@ su -c 'dumpsys bluetooth_manager' | grep -iE 'OffloadEnabled|Current Codec|sink 
 | `docs/RESEARCH.md` | 所有實測資料與來源，標示已驗證 / 第三方 |
 | `docs/ARCHITECTURE.md` | 早期的方案比較與決策過程（歷史紀錄） |
 | `bridge/` | SSC ↔ Opus 轉換、封包組裝與測試 |
+| `probe/` | 探測模組原始碼、測試與最新交接紀錄（`HANDOFF-CLAUDE-CODE.md`） |
 | `scripts/` | 抓取 / 編譯 / 測試開源編碼器與 `bridge/` |
 | `tools/probe-device.sh` | 手機蓝牙棧探測（文字報告） |
 | `tools/check-ssc-capture.sh` | 從 btsnoop 列出 SSC 協商與碼率（驗收用）；S25+ 參考輸出見 `docs/RESEARCH.md` 1b |

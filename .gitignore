@@ -1,5 +1,6 @@
 # Third-party source fetched by scripts/fetch-upstream.sh
 third_party/
+!probe/third_party/
 
 # Build output / reports
 out/
