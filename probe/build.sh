@@ -4,11 +4,12 @@
 #   XCC_INC="<-isystem ...>" ./build.sh              -> same, with host clang + explicit bionic headers
 #                                                      (only for sandboxes without an NDK; see README)
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")" && { pwd -W 2>/dev/null || pwd; })"   # pwd -W: Git Bash on Windows
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) NDK_HOST=windows-x86_64 ;; Darwin) NDK_HOST=darwin-x86_64 ;; *) NDK_HOST=linux-x86_64 ;; esac
 OBJ="$ROOT/out/obj"; STAGE="$ROOT/out/stage"
 rm -rf "$OBJ" "$STAGE"; mkdir -p "$OBJ" "$STAGE/zygisk"
 if [ -n "${ANDROID_NDK_HOME:-}" ]; then
-  BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+  BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$NDK_HOST/bin"
   CC="$BIN/clang"; CXX="$BIN/clang++"; STRIP="$BIN/llvm-strip"; XINC=()
 else
   : "${XCC_INC:?set ANDROID_NDK_HOME (or XCC_INC for a no-NDK build)}"
@@ -40,7 +41,8 @@ done
 # NDK build: real stub libraries. No-NDK build: empty stand-in libraries with the right names, so the
 # result still records DT_NEEDED for libc/libm/libdl/liblog (the undefined symbols were checked separately).
 if [ -n "${ANDROID_NDK_HOME:-}" ]; then
-  LDX=(-Wl,-z,defs -llog -ldl)
+  # -nostdlib drops compiler-rt; NDK clang emits outline atomics (__aarch64_*), so link the builtins archive.
+  LDX=(-Wl,-z,defs "$("$CC" "${TGT[@]}" -print-libgcc-file-name)" -lc -lm -llog -ldl)
 else
   STUBS="$ROOT/out/stubs"; mkdir -p "$STUBS"; echo "" > "$STUBS/empty.c"
   for l in c m dl log; do
@@ -55,6 +57,12 @@ fi
 cp "$ROOT"/module/* "$STAGE/"
 cp "$ROOT/third_party/README.txt" "$STAGE/THIRD_PARTY.txt"
 cp "$ROOT/third_party/shadowhook/LICENSE" "$STAGE/LICENSE.shadowhook.txt"
+# Windows checkouts with core.autocrlf turn these into CRLF, which breaks sh and module.prop on Android.
+sed -i 's/\r$//' "$STAGE"/*.sh "$STAGE"/*.prop "$STAGE"/*.txt
 V="$(sed -n 's/^version=//p' "$ROOT/module/module.prop")"
-(cd "$STAGE" && rm -f "../openssc-probe-$V.zip" && zip -q -r -X "../openssc-probe-$V.zip" .)
+if command -v zip >/dev/null; then
+  (cd "$STAGE" && rm -f "../openssc-probe-$V.zip" && zip -q -r -X "../openssc-probe-$V.zip" .)
+else  # Windows: bsdtar from System32 writes zip with -a
+  (cd "$STAGE" && rm -f "../openssc-probe-$V.zip" && /c/Windows/System32/tar.exe -a -c -f "../openssc-probe-$V.zip" *)
+fi
 echo "built out/openssc-probe-$V.zip"
