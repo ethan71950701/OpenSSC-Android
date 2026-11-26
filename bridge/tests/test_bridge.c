@@ -66,6 +66,11 @@ static void test_config_to_ssc(void) {
     CHECK(sscb_opus_config_to_ssc(opus_cfg, 0x5A, out) == 0);
     CHECK(sscb_is_ssc_info(out) == 1 && out[9] == 0x5A);
 
+    /* HiFi 48 kHz: must reproduce exactly the media codec element the Galaxy S25+ sent */
+    static const uint8_t s25_hifi[SSCB_INFO_LEN] = {0x09, 0x00, 0xff, 0x75, 0x00, 0x00, 0x00, 0x03, 0x01, 0x0c};
+    CHECK(sscb_opus_config_to_ssc(opus_cfg, SSCB_SSC_CONFIG_HIFI_48K, out) == 0);
+    CHECK(memcmp(out, s25_hifi, sizeof s25_hifi) == 0);
+
     /* only 48 kHz / 20 ms / stereo is accepted */
     uint8_t mono[SSCB_INFO_LEN];
     sscb_build_info(SSCB_OPUS_VENDOR_ID, SSCB_OPUS_CODEC_ID,
@@ -109,11 +114,13 @@ static void test_packer_payload(void) {
     CHECK(sscb_packer_payload(&p, frames, 2, out, 900, &ts) == SSCB_ERR_BUFFER);
 }
 
-/* Encodes a real test vector with the open-source encoder and packs it as the bridge would. */
+/* Encodes a real test vector the way the first version will (48 kHz HiFi, 192 kb/s: 16-bit PCM from the
+ * stack fed to the encoder as 24-bit, like Samsung's HiFi path) and packs it as the bridge would. */
 static void test_end_to_end(const char *vectors) {
     char path[1024];
     FILE *f;
     int16_t pcm[2 * SSC_ENC_FRAME_SAMPLES];
+    int32_t pcm24[2 * SSC_ENC_FRAME_SAMPLES];
     uint8_t frames[2 * SSC_ENC_MAX_FRAME_BYTES], payload[2048];
     ssc_encoder *enc;
     sscb_packer p;
@@ -134,10 +141,14 @@ static void test_end_to_end(const char *vectors) {
     CHECK(sscb_packer_init(&p, frame_bytes, 1005, 0, 0) == 2);
 
     while (fread(pcm, sizeof pcm, 1, f) == 1) {
-        int n = ssc_encode(enc, pcm, 192000, 0, frames + pending * frame_bytes, SSC_ENC_MAX_FRAME_BYTES);
+        int i, n;
+        uint8_t *fr = frames + pending * frame_bytes;
+        for (i = 0; i < 2 * SSC_ENC_FRAME_SAMPLES; i++) pcm24[i] = (int32_t)pcm[i] * 256; /* 16 -> 24 bit */
+        n = ssc_encode_s32(enc, pcm24, 24, 192000, 0, fr, SSC_ENC_MAX_FRAME_BYTES);
         CHECK(n == frame_bytes);
-        CHECK(frames[pending * frame_bytes] == 0xFF); /* SSC frame header starts with FF Ex */
-        CHECK((frames[pending * frame_bytes + 1] & 0xF0) == 0xE0);
+        CHECK(fr[0] == 0xFF); /* SSC frame header starts with FF Ex */
+        CHECK((fr[1] & 0xF0) == 0xE0);
+        CHECK(fr[3] == 0xF3); /* rate code of 192 kb/s, as in the S25+ capture */
         if (++pending == p.frames_per_packet) {
             int len = sscb_packer_payload(&p, frames, pending, payload, sizeof payload, &ts);
             CHECK(len == 2 * frame_bytes);
@@ -151,7 +162,7 @@ static void test_end_to_end(const char *vectors) {
     fclose(f);
     ssc_encoder_destroy(enc);
     CHECK(packets > 50);
-    printf("end-to-end: %d packets of %d bytes (2 x %d-byte frames) at 192 kb/s, 48 kHz\n", packets,
+    printf("end-to-end: %d packets of %d bytes (2 x %d-byte frames), HiFi 48 kHz 24-bit, 192 kb/s\n", packets,
            2 * frame_bytes, frame_bytes);
 }
 

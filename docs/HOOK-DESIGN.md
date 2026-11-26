@@ -27,11 +27,13 @@ Buds  ◀─(SSC 設定: 75 00 00 00 / 03 01 / ??)──  [翻譯層] ◀─(Opu
 1. **能力翻譯（收）**：Buds 回報的 SSC 端點，在棧解析前改寫成合法的 Opus 能力（48 kHz｜20 ms｜立體聲 = `0x80|0x10|0x02 = 0x92`）。
    棧內部所有內聯的比對看到的都是 Opus 的常數，自然會選這個槽位。
 2. **設定翻譯（送）**：棧送出的 Opus `Set Configuration` 在出去前改回 SSC 格式。
-   **SSC 設定位元組的精確值必須從 S25+ 的 btsnoop 取得**（三星手機實際送給 Buds 的 `Set Configuration`），不能猜。
+   設定位元組已從 S25+ 的 btsnoop 取得：HiFi 48 kHz = `0x0C`、UHQ 96 kHz = `0x0A`。
 3. **編碼器替換**：hook Opus 編碼器的 init / send_frames / feeding / cleanup，
    在 init 時保存棧傳入的 PCM 讀取回呼與封包送出回呼，之後由我們自己讀 PCM、用 SSC 編碼、組 RTP 封包送出。
    幀長 864 樣本（48 kHz 為 18 ms），節奏由我們控制，不沿用 Opus 的 20 ms。
-4. **第一版只做 48 kHz / 16 bit 的 SSC**（棧對 Opus 槽位只認 48 kHz / 16 bit，音訊 HAL 會照此送 PCM）。
+4. **第一版做 HiFi 48 kHz、192 kb/s**，送給 Buds 的設定位元組是 **`0x0C`**（與 S25+ 實際送出的完全相同，已由抓包確認）。
+   棧對 Opus 槽位只認 48 kHz / 16 bit，所以音訊 HAL 會送 16 bit PCM；編碼前乘以 256 當作 24 bit 輸入（和三星 HiFi 路徑相同）。
+   每幀 484 位元組，MTU ≥ 980 時一包 2 幀。`bridge/` 的端對端測試就是照這個設定跑的，幀頭碼率代碼為 `F3`，與 S25+ 相同。
    UHQ（96 kHz / 24 bit）要另外 hook 採樣率與位元深度的查詢，放到之後。
 
 翻譯層的掛載點（符號已確認）：
@@ -98,7 +100,7 @@ Buds  ◀─(SSC 設定: 75 00 00 00 / 03 01 / ??)──  [翻譯層] ◀─(Opu
 | 項目 | 怎麼查 |
 |---|---|
 | ~~AVDTP 收發與 `bta_av_co` 的符號~~ | 已確認：`avdt_msg_prs_cfg` / `avdt_msg_bld_cfg` |
-| 三星送給 Buds 的 SSC `Set Configuration` 位元組 | S25+ 的 btsnoop |
+| ~~三星送給 Buds 的 SSC 設定位元組~~ | 已確認：HiFi 48 kHz = `0x0C`、UHQ 96 kHz = `0x0A` |
 | 選到 Opus 槽位時是否自動走軟體編碼（卸載仍開啟時） | 第一個原型實測 |
 | ~~裝置上可用的 Zygisk 實作~~ | 已確認：Zygisk Next 1.5.0（KernelSU 32680），zygote64 / zygote32 皆已注入 |
 | ShadowHook 能否解析 `.gnu_debugdata` 符號 | 原型實測 |

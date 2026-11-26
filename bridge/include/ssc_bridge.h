@@ -53,8 +53,13 @@ extern "C" {
 #define SSCB_SSC_MODE_HIFI 0x04
 #define SSCB_SSC_MODE_UHQ_V2 0x02
 
-/* No SSC configuration byte is known yet: it must come from a capture of a Samsung phone's
- * Set Configuration to the Buds. Pass this to sscb_opus_config_to_ssc() until then. */
+/* SSC configuration bytes a Galaxy S25+ sent to Galaxy Buds 3 Pro (Set Configuration / Reconfigure),
+ * captured with btsnoop and matched to the bitrate codes of the frames that followed:
+ *   0x0C -> 48 kHz "HiFi", frames at 192 kb/s (rate code 0xF3)
+ *   0x0A -> 96 kHz UHQ,    frames at 584 kb/s (rate code 0xE3) */
+#define SSCB_SSC_CONFIG_HIFI_48K 0x0C
+#define SSCB_SSC_CONFIG_UHQ_96K 0x0A
+/* Use for any mode whose configuration byte has not been captured: the translation then refuses. */
 #define SSCB_SSC_CONFIG_UNKNOWN (-1)
 
 /* RTP header added by the AVDTP layer in front of every media payload. */
