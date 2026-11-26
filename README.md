@@ -3,6 +3,8 @@
 目標：讓 **Xiaomi 13（HyperOS，KernelSU root）** 透過 A2DP 以 **SSC（Samsung Scalable / Seamless Codec）** 連接 **Galaxy Buds 3 Pro**。
 S25+ 只用來研究（取得協商資料、對照三星實作），不是目標裝置。
 
+**新接手請從 [`docs/HANDOFF.md`](docs/HANDOFF.md) 開始讀。**
+
 > 狀態：**設計已定，離線元件完成**。小米 13 的蓝牙棧已分析完（Opus 槽位可用、符號齊全，見 `docs/HOOK-DESIGN.md`），
 > 轉換與組包的 `bridge/` 已有單元測試。SSC 設定位元組已由 S25+ 抓包確認（HiFi 48 kHz = `0x0C`、UHQ = `0x0A`）。注入蓝牙行程的模組尚未開始。
 
@@ -14,10 +16,11 @@ S25+ 只用來研究（取得協商資料、對照三星實作），不是目標
 | 手機端編譯與自測（Termux） | 已在小米 13（ARM64）通過：`SELFTEST PASSED` | `scripts/build-tool.sh` |
 | SSC↔Opus codec 資訊轉換與封包組裝（離線、可單元測試） | 已在 Linux 驗證：全部測試通過，含端對端編碼＋組包 | `bridge/`、`scripts/test-bridge.sh` |
 | 手機蓝牙栈探測腳本（文字報告，不複製二進位檔） | v1 已在小米 13 跑過；v2 修正了目標庫並遮蔽 MAC | `tools/probe-device.sh` |
+| btsnoop 的 SSC 協商與碼率分析（驗收用） | 已寫好，尚未用真實紀錄測試 | `tools/check-ssc-capture.sh` |
 | 研究結論、已知事實與未知事項 | 見文件 | `docs/RESEARCH.md` |
-| 整合方案與需要做的事 | 設計稿 | `docs/ARCHITECTURE.md` |
-| Hook 的具體設計與目標函數 | 設計稿 | `docs/HOOK-DESIGN.md` |
-| 換到本機電腦後怎麼接手 | 逐步清單 | `docs/HANDOFF.md` |
+| **接手指南：現況、剩下的工作、驗收標準、救援** | 入口文件 | `docs/HANDOFF.md` |
+| 目前定案的整合設計與目標函數 | 設計 | `docs/HOOK-DESIGN.md` |
+| 早期方案比較（歷史紀錄） | 歷史 | `docs/ARCHITECTURE.md` |
 
 ## 快速開始（PC 或 Termux）
 

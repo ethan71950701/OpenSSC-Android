@@ -169,14 +169,16 @@
 - LSPosed 原專案已久未更新，社群主要用 JingMatrix 的 Vector 分支；有報告指 HyperOS 上 LSPosed 常顯示啟用但模組不生效（第三方，未驗證）。
 - 搜尋範圍內**沒有找到**專門在小米 HyperOS 上啟用 SSC 的現成開源模組。
 
-## 5. 仍然未知（決定整合方案的關鍵）
+## 5. 原本的未知事項（已全部回答）
 
-| 未知 | 怎麼查 | 影響 |
-|---|---|---|
-| ~~小米 13 的 HyperOS / Android 版本、蓝牙 APEX~~ | 已查：Android 17、`com.android.bt` 370399999 | 要對應 Android 17 的 AOSP 蓝牙原始碼；能否取得待確認 |
-| `libbluetooth_qti.so` 在哪、裡面有沒有 `A2DP_Vendor*` / `a2dp_vendor_*` 框架 | `tools/probe-device.sh` v2（或手動 `find` + `grep`） | 決定走「改寫既有 vendor codec」還是「整個新增」 |
-| 小米的棧是否 strip 了符號（能不能 hook / 對照） | 同上 | 決定方案 B 是否可行 |
-| ~~Buds 3 Pro 的 SSC 能力位元組~~ | 已查：`0x3E`（見 1b） | — |
-| Buds 對三星來源的能力位元組、以及三星手機送出的 `Set Configuration` 位元組 | S25+ 上的 btsnoop | 精確的設定格式（模式旗標、採樣率位元） |
-| 關閉 A2DP 卸載後，Buds 是否能維持穩定的軟體編碼連線 | 小米 13 實測 | SSC 的必要前提 |
-| APEX 唯讀的繞過方式在小米 13 + KernelSU 上哪個可行 | 實測 | 決定部署方式 |
+| 問題 | 結果 |
+|---|---|
+| 小米 13 的系統與蓝牙 APEX | Android 17、`com.android.bt` 370399999（1b） |
+| 小米的蓝牙棧在哪、有沒有 vendor codec 框架 | `libbluetooth_jni.so`（`MiuiBluetooth`），有 aptX / LDAC / LHDC / Opus 等（1b） |
+| 符號是否被 strip | 導出符號只有 2 個，但 MiniDebugInfo 有 24,817 個內部符號（1b） |
+| Buds 對非三星手機是否回報 SSC | 會，能力 `0x3E`，與對三星相同（1b） |
+| 三星送出的設定位元組 | HiFi 48 kHz `0x0C`、UHQ 96 kHz `0x0A`（1b，S25+ btsnoop） |
+| 全域關閉卸載是否可用 | 棧會切換，但沒有聲音；不採用（1b） |
+| Opus 槽位能否啟用 | 可以（1b） |
+
+仍待解決的問題列在 `docs/HANDOFF.md` 第 8 節。
