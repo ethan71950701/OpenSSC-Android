@@ -19,7 +19,7 @@ fi
 TGT=(--target=aarch64-linux-android31)
 CFLAGS=(-DXZ_USE_CRC64 "${TGT[@]}" "${XINC[@]}" -O2 -fPIC -fvisibility=hidden -ffunction-sections -fdata-sections
         -Wall -Wextra -I"$ROOT/src" -I"$ROOT/third_party/xz" -I"$ROOT/third_party/zygisk"
-        -I"$ROOT/third_party/shadowhook/include")
+        -I"$ROOT/third_party/shadowhook/include" -I"$ROOT/../bridge/include")
 for f in xz_crc32 xz_crc64 xz_dec_stream xz_dec_lzma2; do
   "$CC" "${CFLAGS[@]}" -Wno-unused-parameter -c "$ROOT/third_party/xz/$f.c" -o "$OBJ/$f.o"
 done
@@ -32,7 +32,8 @@ for f in "$SH"/*.c "$SH"/arch/arm64/*.c "$SH"/arch/arm64/*.S "$SH"/common/*.c "$
   "$CC" "${SHF[@]}" -c "$f" -o "$OBJ/sh_$(basename "$f").o"
 done
 "$CC" "${CFLAGS[@]}" -c "$ROOT/src/clear_cache.c" -o "$OBJ/clear_cache.o"
-for f in module symres guard hooks; do
+"$CC" "${CFLAGS[@]}" -c "$ROOT/../bridge/src/ssc_bridge.c" -o "$OBJ/ssc_bridge.o"
+for f in module symres guard hooks translate diag; do
   "$CXX" "${CFLAGS[@]}" -std=c++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics \
     -Wno-missing-field-initializers -c "$ROOT/src/$f.cpp" -o "$OBJ/$f.o"
 done

@@ -16,9 +16,10 @@ done
 g++ -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -DXZ_USE_CRC64 -Wno-missing-field-initializers \
   -I"$ROOT/src" -I"$ROOT/third_party/xz" "$ROOT/tests/test_host.cpp" "$ROOT/src/symres.cpp" "$ROOT/src/guard.cpp" "$O"/*.o -o "$O/test"
 "$O/test" "$O/lib.so"
+gcc -g -O1 -fsanitize=address,undefined -c "$ROOT/../bridge/src/ssc_bridge.c" -I"$ROOT/../bridge/include" -o "$O/ssc_bridge.o"
 g++ -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wno-missing-field-initializers \
-  -I"$ROOT/tests/stubs" -I"$ROOT/src" \
-  "$ROOT/tests/test_hooks.cpp" "$ROOT/src/hooks.cpp" "$ROOT/src/guard.cpp" -o "$O/test_hooks"
+  -I"$ROOT/../bridge/include" -I"$ROOT/tests/stubs" -I"$ROOT/src" \
+  "$ROOT/tests/test_hooks.cpp" "$ROOT/src/hooks.cpp" "$ROOT/src/guard.cpp" "$ROOT/src/translate.cpp" "$ROOT/src/diag.cpp" "$O/ssc_bridge.o" -o "$O/test_hooks"
 "$O/test_hooks"
 for s in "$ROOT"/module/*.sh; do sh -n "$s"; done
 echo "shell scripts: syntax OK"

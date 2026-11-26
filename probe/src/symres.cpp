@@ -29,12 +29,27 @@ static const char *read_ident(const char *p, const char **id, size_t *n) {
     return p + len;
 }
 
+#define MAX_COMP 8
+
 int sr_symbol_matches(const char *symbol, const char *name) {
     size_t name_len = strlen(name);
-    const char *sep = strstr(name, "::");
+
+    /* Split "a::b::c" into components (trailing part of the qualified name). */
+    const char *cn[MAX_COMP];
+    size_t cl[MAX_COMP];
+    int comps = 0;
+    for (const char *q = name;;) {
+        const char *sep = strstr(q, "::");
+        size_t n = sep ? (size_t)(sep - q) : strlen(q);
+        if (n == 0 || comps == MAX_COMP) return 0;
+        cn[comps] = q;
+        cl[comps++] = n;
+        if (!sep) break;
+        q = sep + 2;
+    }
 
     if (strncmp(symbol, "_Z", 2) != 0) /* C symbol */
-        return !sep && strncmp(symbol, name, name_len) == 0 && suffix_ok(symbol + name_len);
+        return comps == 1 && strncmp(symbol, name, name_len) == 0 && suffix_ok(symbol + name_len);
 
     const char *p = symbol + 2;
     int nested = 0;
@@ -46,18 +61,22 @@ int sr_symbol_matches(const char *symbol, const char *name) {
         p++;
     }
 
-    const char *prev = NULL, *last = NULL;
-    size_t prev_n = 0, last_n = 0;
+    const char *ids[16];
+    size_t idn[16];
+    int nid = 0;
     for (;;) {
         const char *id;
         size_t n;
         if (nested && *p == 'L') p++;
         const char *next = read_ident(p, &id, &n);
         if (!next) return 0;
-        prev = last;
-        prev_n = last_n;
-        last = id;
-        last_n = n;
+        if (nid == 16) { /* keep the last 16: shift */
+            memmove(ids, ids + 1, sizeof(ids) - sizeof(ids[0]));
+            memmove(idn, idn + 1, sizeof(idn) - sizeof(idn[0]));
+            nid--;
+        }
+        ids[nid] = id;
+        idn[nid++] = n;
         p = next;
         if (!nested) break;
         if (*p == 'E') {
@@ -70,11 +89,13 @@ int sr_symbol_matches(const char *symbol, const char *name) {
     const char *dot = strchr(p, '.');
     if (dot && !suffix_ok(dot)) return 0;
 
-    if (!sep) return last_n == name_len && memcmp(last, name, name_len) == 0;
-    size_t cls_n = (size_t)(sep - name);
-    const char *method = sep + 2;
-    return prev && prev_n == cls_n && memcmp(prev, name, cls_n) == 0 && last_n == strlen(method) &&
-           memcmp(last, method, last_n) == 0;
+    /* The trailing identifiers must equal the requested components, in order. */
+    if (comps > nid) return 0;
+    for (int k = 0; k < comps; k++) {
+        int j = nid - comps + k;
+        if (idn[j] != cl[k] || memcmp(ids[j], cn[k], cl[k]) != 0) return 0;
+    }
+    return 1;
 }
 
 static int in_range(size_t len, uint64_t off, uint64_t size) { return off <= len && size <= len - off; }

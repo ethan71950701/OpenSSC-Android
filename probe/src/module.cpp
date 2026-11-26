@@ -1,4 +1,4 @@
-/* OpenSSC probe (stage 2): runs inside com.android.bluetooth only, waits for the Bluetooth stack
+/* OpenSSC probe (stage 3 adds an opt-in translate mode, see hooks.cpp; stage 2): runs inside com.android.bluetooth only, waits for the Bluetooth stack
  * library, looks up the functions the hook design needs and writes a report. When every required
  * function is found it installs log-only hooks (see hooks.cpp): they call the original function with
  * the original arguments and return its result unchanged. It sets no properties and changes no
@@ -16,12 +16,13 @@
 #include <unistd.h>
 
 #include "guard.h"
+#include "diag.h"
 #include "hooks.h"
 #include "symres.h"
 #include "zygisk.hpp"
 
 #define TAG "OpenSSCProbe"
-#define VERSION "0.2"
+#define VERSION "0.3.6"
 #define TARGET_PROCESS "com.android.bluetooth"
 #define TARGET_UID 1002
 #define TARGET_LIB "libbluetooth_jni.so"
@@ -33,7 +34,8 @@
 #define WAIT_SECONDS 120
 #define SURVIVE_SECONDS 60
 
-static sr_target g_targets[] = {
+#define BASE_TARGETS 37
+static sr_target g_targets[BASE_TARGETS + DIAG_MAX] = {
     /* required by the first hook version */
     {"avdt_msg_prs_cfg", 1},
     {"avdt_msg_bld_cfg", 1},
@@ -72,10 +74,15 @@ static sr_target g_targets[] = {
     {"bta_av_co_audio_setconfig", 0},
     {"bta_av_co_save_codec", 0},
     {"bta_av_co_audio_update_mtu", 0},
+    {"A2dpCodecs::setCodecUserConfig", 0},
 };
-#define TARGET_COUNT (sizeof(g_targets) / sizeof(g_targets[0]))
+static size_t g_target_count = BASE_TARGETS; /* grows by the diagnostic names read from diag_targets.txt */
+#define TARGET_COUNT g_target_count
+static char g_diag_names[DIAG_MAX][DIAG_NAME_MAX];
+static size_t g_diag_count;
 
 static int g_report_fd = -1;
+static bool g_translate_allowed = false; /* enable_translate file present */
 static bool g_hooks_allowed = false; /* set in preAppSpecialize, read by the probe thread */
 
 __attribute__((format(printf, 1, 2))) static void out(const char *fmt, ...) {
@@ -86,6 +93,16 @@ __attribute__((format(printf, 1, 2))) static void out(const char *fmt, ...) {
     va_end(ap);
     __android_log_write(ANDROID_LOG_INFO, TAG, line);
     if (g_report_fd >= 0) dprintf(g_report_fd, "%s\n", line);
+}
+
+/* Logs a line and appends it to the report file (the report is closed by the time hooks are decided). */
+static void note(const char *line) {
+    __android_log_write(ANDROID_LOG_INFO, TAG, line);
+    int fd = open(REPORT_FILE, O_WRONLY | O_APPEND | O_CLOEXEC);
+    if (fd >= 0) {
+        dprintf(fd, "%s\n", line);
+        close(fd);
+    }
 }
 
 struct lib_info {
@@ -199,6 +216,12 @@ static void *probe_thread(void *) {
     g_report_fd = open(REPORT_FILE, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     out("OpenSSC probe %s, pid %d", VERSION, getpid());
     if (g_report_fd < 0) out("warning: cannot write report file, logcat only");
+    for (size_t k = 0; k < g_diag_count; k++) {
+        sr_target &t = g_targets[g_target_count++];
+        t = sr_target();
+        t.name = g_diag_names[k];
+        t.required = 0;
+    }
     bool pass = false;
     if (li.path[0])
         pass = resolve(li);
@@ -208,20 +231,31 @@ static void *probe_thread(void *) {
     g_report_fd = -1;
 
     if (!pass)
-        __android_log_write(ANDROID_LOG_INFO, TAG, "hooks: not installed (symbol report is not PASS)");
+        note("hooks: not installed (symbol report is not PASS)");
     else if (!g_hooks_allowed)
-        __android_log_write(ANDROID_LOG_INFO, TAG, "hooks: not installed (disable_hooks file present)");
+        note("hooks: not installed (disable_hooks file present)");
     else if (guard_count(STREAM_STATE_FILE) < 0 || guard_count(STREAM_STATE_FILE) >= GUARD_LIMIT)
-        __android_log_write(ANDROID_LOG_WARN, TAG,
-                            "hooks: not installed (stream crash limit reached or state unreadable)");
+        note("hooks: not installed (stream crash limit reached or state unreadable; "
+             "delete openssc_probe_stream_state to re-enable)");
     else
-        hooks_install(li.bias, g_targets, TARGET_COUNT, HOOKLOG_FILE, STREAM_STATE_FILE);
+    {
+        hooks_set_translate(g_translate_allowed);
+        if (g_translate_allowed) hooks_set_seen_path(DATA_DIR "/openssc_probe_ssc_seen");
+        __android_log_print(ANDROID_LOG_INFO, TAG, "translate mode: %s", g_translate_allowed ? "ON (SSC<->Opus rewrite, frames muted)" : "off (log only)");
+        if (hooks_install(li.bias, g_targets, TARGET_COUNT, HOOKLOG_FILE, STREAM_STATE_FILE) == 0 && g_diag_count > 0)
+            diag_install(li.bias, g_targets, TARGET_COUNT, g_diag_names, g_diag_count);
+    }
 
     sleep(SURVIVE_SECONDS);
     if (guard_success(STATE_FILE) == 0)
         out("process stable for %d s, crash counter reset", SURVIVE_SECONDS);
     else
         out("warning: could not reset crash counter");
+    /* Stay alive for the life of the process: a stream that has run for 60 s counts as survived. */
+    for (;;) {
+        sleep(10);
+        hooks_stream_tick();
+    }
     return nullptr;
 }
 
@@ -246,6 +280,16 @@ public:
                 __android_log_write(ANDROID_LOG_WARN, TAG, "disabled by disable_probe (or no module dir)");
                 target = false;
             }
+            if (dir >= 0) {
+                int fd = openat(dir, "diag_targets.txt", O_RDONLY | O_CLOEXEC);
+                if (fd >= 0) {
+                    char buf[4096];
+                    ssize_t r = read(fd, buf, sizeof(buf));
+                    close(fd);
+                    if (r > 0) g_diag_count = diag_parse_names(buf, (size_t)r, g_diag_names);
+                }
+            }
+            g_translate_allowed = dir >= 0 && faccessat(dir, "enable_translate", F_OK, 0) == 0;
             g_hooks_allowed = dir >= 0 && faccessat(dir, "disable_hooks", F_OK, 0) != 0;
             if (dir >= 0) close(dir);
         }

@@ -16,6 +16,22 @@ int main(int argc, char **argv) {
     CHECK(sr_symbol_matches("_ZL16avdt_msg_prs_cfgv", "avdt_msg_prs_cfg"));
     CHECK(sr_symbol_matches("_ZN12_GLOBAL__N_116avdt_msg_prs_cfgEv", "avdt_msg_prs_cfg"));
     CHECK(sr_symbol_matches("_ZNK1A1BEv", "A::B"));
+    /* qualified names with 3+ components, as in the real Xiaomi symbol table */
+    const char *fe = "_ZN9bluetooth5audio4a2dp17is_hal_offloadingEv";
+    const char *aidl = "_ZN9bluetooth5audio4aidl4a2dp17is_hal_offloadingEv";
+    CHECK(sr_symbol_matches(fe, "audio::a2dp::is_hal_offloading"));
+    CHECK(!sr_symbol_matches(aidl, "audio::a2dp::is_hal_offloading"));
+    CHECK(sr_symbol_matches(aidl, "aidl::a2dp::is_hal_offloading"));
+    CHECK(sr_symbol_matches(fe, "a2dp::is_hal_offloading") && sr_symbol_matches(aidl, "a2dp::is_hal_offloading"));
+    CHECK(sr_symbol_matches(fe, "bluetooth::audio::a2dp::is_hal_offloading"));
+    CHECK(!sr_symbol_matches(fe, "x::bluetooth::audio::a2dp::is_hal_offloading"));
+    CHECK(!sr_symbol_matches(fe, "audio::a2dp::") && !sr_symbol_matches(fe, "::a2dp") && !sr_symbol_matches(fe, ""));
+    CHECK(sr_symbol_matches("_ZN7BtaAvCo13SetActivePeerERK10RawAddressh", "BtaAvCo::SetActivePeer"));
+    CHECK(!sr_symbol_matches("_ZN12BtifAvSource13SetActivePeerERK10RawAddressNSt3__17promiseIvEE", "BtaAvCo::SetActivePeer"));
+    CHECK(sr_symbol_matches("_ZN12BtifAvSource13SetActivePeerERK10RawAddressNSt3__17promiseIvEE", "BtifAvSource::SetActivePeer"));
+    CHECK(sr_symbol_matches("_Z30btif_a2dp_source_start_sessionRK10RawAddressNSt3__17promiseIvEE", "btif_a2dp_source_start_session"));
+    CHECK(!sr_symbol_matches("_ZL38btif_a2dp_source_start_session_delayedRK10RawAddress", "btif_a2dp_source_start_session"));
+    CHECK(!sr_symbol_matches("btif", "a::btif"));
     CHECK(!sr_symbol_matches("_ZZ16avdt_msg_prs_cfgvENK3$_0clEv", "avdt_msg_prs_cfg"));
     CHECK(!sr_symbol_matches("_Z16avdt_msg_prs_cfg", "avdt_msg_prs_cfg"));
     CHECK(!sr_symbol_matches("_Z99999999999999999999x", "x"));

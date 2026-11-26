@@ -1,0 +1,6 @@
+id=openssc_audiopolicy
+name=OpenSSC Audio Policy (Opus to software A2DP)
+version=0.2.2
+versionCode=4
+author=OpenSSC
+description=Full-software A2DP: when persist.bluetooth.a2dp_offload.disabled=true, routes SBC, AAC and Opus A2DP to the software bluetooth_qti module (patched policy copy bind-mounted at boot, nothing shipped from the vendor).

@@ -1,4 +1,4 @@
-# OpenSSC Probe 0.2（第二階段：只記錄的 hook）
+# OpenSSC Probe 0.3（第三階段：只記錄的 hook ＋ 可選的靜音翻譯模式）
 
 在小米 13 的 `com.android.bluetooth` 行程裡尋找設計文件列出的函數，寫成報告（和 0.1 一樣）。
 **0.2 新增**：當 8 個必要函數都唯一找到時，用 ShadowHook（MIT，靜態連結，unique 模式）掛上「只記錄」的 hook。
@@ -9,16 +9,58 @@
 `a2dp_vendor_opus_feeding_reset / feeding_flush`、`a2dp_vendor_opus_get_encoder_interval_ms`、`a2dp_vendor_opus_send_frames`，
 加上選用的 `bta_av_co_audio_update_mtu`（找不到就略過）。日誌不記錄藍牙位址。
 
+## 0.3 靜音翻譯模式（預設關閉）
+
+模組目錄有 `enable_translate` 檔案時（重開機後生效）：
+1. `avdt_msg_prs_cfg` 收到的能力清單裡，Buds 的 SSC 能力（vendor `0x75`、codec `0x0103`）在棧解析之前被改寫成 Opus 能力 `0x92`。
+2. `avdt_msg_bld_cfg` 建好的 Set Configuration，如果是 48 kHz / 20 ms / 立體聲的 Opus 設定，在已寫好的位元組上改回 SSC `0x0C`。
+   只在 Buds 能力被改寫後 30 分鐘內才改，且改的是送出的位元組，不碰棧自己的資料結構（所以不依賴 `AvdtpSepConfig` 欄位配置）。
+3. 為了讓棧選到 Opus（它的優先度 1501 低於 AAC 的 2001，開發者選項選單也沒有 Opus），看過 Buds 的 SSC 能力之後 30 分鐘內，
+   後續收到的能力清單裡的 AAC 會被標成無效 codec 類型（`TRANSLATE hid ... AAC`），棧就會忽略 AAC 而選 Opus。
+   所以**第一次連線仍是 AAC，要把 Buds 斷線再連線一次才會走 Opus**。副作用：翻譯模式開著的 30 分鐘內，其他耳機也不會用 AAC（改用 SBC）。
+4. 目前設定是 SSC 時，`a2dp_vendor_opus_send_frames` **不呼叫原函數**：沒有任何音訊封包送給 Buds（靜音）。
+   之後只要有另一種 codec 的設定被建構（例如接其他耳機的 AAC）就解除靜音。
+
+沒有 `enable_translate` 檔案時行為和 0.2.1 完全相同。要看到 Opus 槽位被選中，還需要 `persist.bluetooth.opus.enabled true` 並重開機。
+開啟與回復步驟（在手機終端機執行）：
+
+```
+su -c 'setprop persist.bluetooth.opus.enabled true'
+```
+
+```
+su -c 'touch /data/adb/modules/openssc_probe/enable_translate'
+```
+
+回復：
+
+```
+su -c 'rm /data/adb/modules/openssc_probe/enable_translate'
+```
+
+```
+su -c 'setprop persist.bluetooth.opus.enabled false'
+```
+
+日誌關鍵字：`TRANSLATE caps`、`TRANSLATE config`、`MUTED`、`opus_encoder_init`。
+
+## 0.3.4 診斷 hook（由 `diag_targets.txt` 決定，預設沒有）
+
+模組目錄裡放一個 `diag_targets.txt`（一行一個函數名稱，`#` 開頭是註解，最多 10 個，格式 `函數` 或 `命名空間::函數`），
+重啟藍牙後這些函數會被掛上「只記錄」的 hook，日誌出現 `DIAG 名稱(x0,...,x5) -> 回傳值`，每個函數最多記 40 次，指標只記值、不解讀。
+**只適用於**最多 6 個整數／指標參數、沒有浮點數、沒有堆疊參數、不用隱藏指標回傳結構、不回傳浮點數的函數；
+不符合的函數不要放（會破壞呼叫）。單一 diag hook 失敗只會被略過，不影響主要 hook。沒有這個檔案時完全不動作。
+
 ## 安裝（在電腦上、zip 所在的資料夾執行）
 
 1. 手機接上電腦並開啟 USB 偵錯。在 KernelSU 的超級使用者清單允許「Shell」。
 2. 傳送模組到手機：
 
 ```
-adb push openssc-probe-0.2.zip /sdcard/Download/
+adb push openssc-probe-0.3.4.zip /sdcard/Download/
 ```
 
-3. 手機打開 KernelSU → 模組 → 安裝，選 `Download/openssc-probe-0.2.zip`。
+3. 手機打開 KernelSU → 模組 → 安裝，選 `Download/openssc-probe-0.3.4.zip`。
 4. 重開機，解鎖，開啟藍牙，等約 2 分鐘。
 5. 取得報告：
 
@@ -74,7 +116,7 @@ adb reboot
 adb shell "su -c 'touch /data/adb/modules/openssc_probe/disable_hooks'"
 ```
 
-- **串流閃退計數**：播放開始時記一次，連續播放約 30 秒或正常停止後歸零。連續 3 次在串流中閃退，之後不再掛 hook
+- **串流閃退計數**：串流開始（`encoder_init`）時記一次，行程撐過 60 秒、或正常停止後歸零（0.3.4 起；0.3.3 以前沒有實際播放就不會歸零，會累積到鎖死 hook）。被鎖住時 `openssc_probe_report.txt` 最後會有 `hooks: not installed (stream crash limit ...)`，刪掉 `openssc_probe_stream_state` 即可。連續 3 次在串流中閃退，之後不再掛 hook
   （狀態檔 `openssc_probe_stream_state`，和下面的閃退計數放在同一個資料夾）。
 
 - **藍牙閃退計數**：藍牙行程連續 3 次沒撐到穩定（約 60 秒），之後不再執行。
@@ -121,3 +163,9 @@ tests/run.sh
 - **未驗證**：任何實機行為，包括 ShadowHook 在小米 13 的 Android 17 藍牙行程中初始化與掛鉤、hook 後藍牙是否照常運作、
   Zygisk 之外的 SELinux 是否允許寫兩個新檔（`openssc_probe_hooklog.txt`、`openssc_probe_stream_state`）。
   `AvdtpSepConfig` 在小米版本的欄位配置未驗證，所以日誌只傾印原始位元組，不解讀欄位。
+
+## 0.3.5 / 0.3.6
+
+- 0.3.5：把「看過 SSC 耳機」記在 `openssc_probe_ssc_seen`（24 小時內有效）。藍牙程序重啟後第一次連線就隱藏 AAC，因為 Buds 的 AAC 能力比 SSC 先被讀到。
+- 0.3.6：translate 模式下，擋下上層在 Opus 被選中約 9 秒後送來的「停用 Opus」請求（`A2dpCodecs::setCodecUserConfig`，type 6、priority -1），日誌記 `TRANSLATE blocked`。安裝時會保留舊版的 `enable_translate` 和 `diag_targets.txt`。
+- 實測（全軟體路徑，見 `audiopolicy-module/README.md`）：Opus 槽維持住，串流開始，`opus_send_frames` 每 20 ms 一次（目前靜音）。下一步 0.4 在這裡換成真正的 SSC 編碼。
