@@ -194,7 +194,7 @@ int hooks_install(uintptr_t bias, const sr_target *targets, size_t count, const 
         addr[i] = bias + (uintptr_t)t->match[0].value;
     }
 
-    int rc = shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false);
+    int rc = shadowhook_init(SHADOWHOOK_MODE_UNIQUE, true) /* debuggable: ShadowHook logs to logcat (tag "shadowhook") */;
     if (rc != 0) {
         hlog("hooks: NOT installed, shadowhook_init failed: %d (%s)", rc, shadowhook_to_errmsg(rc));
         return -2;

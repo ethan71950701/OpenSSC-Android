@@ -1,6 +1,6 @@
 id=openssc_probe
 name=OpenSSC Probe
-version=0.2
-versionCode=2
+version=0.2.1
+versionCode=3
 author=OpenSSC
 description=Stage 2: finds Bluetooth stack functions and installs log-only hooks. Changes no data.

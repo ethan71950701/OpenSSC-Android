@@ -87,8 +87,12 @@ int shadowhook_init(shadowhook_mode_t default_mode, bool debuggable) {
       sh_island_init();
       sh_enter_init();
       sh_switch_init();
-      if (__predict_false(0 != sh_linker_init())) GOTO_END(SHADOWHOOK_ERRNO_INIT_LINKER);
-      if (__predict_false(0 != sh_task_init())) GOTO_END(SHADOWHOOK_ERRNO_INIT_TASK);
+      /* OpenSSC patch: the linker DL-init/fini monitor is only needed to hook libraries that are not loaded
+       * yet. We only hook functions by address in an already loaded library, so a failure here is not fatal. */
+      if (__predict_false(0 != sh_linker_init())) {
+        SH_LOG_ALWAYS_SHOW("OpenSSC: linker monitor init failed, continuing without it");
+      }
+      if (__predict_false(0 != sh_task_init())) GOTO_END(SHADOWHOOK_ERRNO_INIT_TASK); /* only registers callbacks */
 
 #undef GOTO_END
 
