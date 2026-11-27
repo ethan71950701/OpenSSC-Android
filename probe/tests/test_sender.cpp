@@ -82,6 +82,13 @@ int main() {
     for (int i = 0; i < 222; i++) { sscs_tick(t); t += 9000; }
     printf("uhq true96: %d packets in 2 s\n", g_pk - before);
     assert(g_pk - before >= 218 && g_pk - before <= 223);
+    /* True 96 kHz with 32-bit PCM: same packet rate, 6912 bytes read per 9 ms tick */
+    sscs_set_pcm_bits(32); before = g_pk;
+    assert(sscs_start(rd, eq, malloc, 1012) == 1);
+    for (int i = 0; i < 222; i++) { sscs_tick(t); t += 9000; }
+    printf("uhq true96/32: %d packets in 2 s\n", g_pk - before);
+    assert(g_pk - before >= 218 && g_pk - before <= 223);
+    sscs_set_pcm_bits(0);
     sscs_set_pcm_rate(0);
     sscs_set_mode(0); g_uhq_test = 0;
     /* 229 kb/s at 48 kHz: 576-byte frames */

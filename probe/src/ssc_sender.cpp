@@ -48,6 +48,12 @@ static int g_opt_bitrate;
 void sscs_set_bitrate(int bps) { g_opt_bitrate = bps; }
 static int g_opt_pcm_hz, g_in_rate = SSCS_SAMPLE_RATE, g_true96;
 void sscs_set_pcm_rate(int hz) { g_opt_pcm_hz = hz; }
+/* 32-bit PCM input (true 96 kHz only): int32 full scale, 8 bytes per stereo sample frame, kept as floats. */
+static int g_opt_pcm_bits, g_in32;
+static int32_t g_raw32[PCM_CAP * CH];
+static float g_pcmf[PCM_CAP * CH];
+static int g_pcmf_n;
+void sscs_set_pcm_bits(int bits) { g_opt_pcm_bits = bits; }
 
 static void up_init(void) {
     double sum = 0;
@@ -109,6 +115,7 @@ void sscs_get_stats(sscs_stats *out) {
 void sscs_reset(void) {
     g_pcm_n = g_hist; /* UHQ: the upsampler's history starts as silence */
     memset(g_pcm, 0, (size_t)g_hist * CH * sizeof(int16_t));
+    g_pcmf_n = 0;
     g_pending = 0;
     g_bytes_read = 0;
     g_last_us = 0;
@@ -128,6 +135,8 @@ int sscs_start(sscs_read_fn read, sscs_enqueue_fn enqueue, sscs_alloc_fn alloc, 
     /* True 96 kHz input (UHQ only): the stack hands over 96 kHz PCM, so no upsampling. Otherwise the input is 48 kHz. */
     g_true96 = g_uhq && g_opt_pcm_hz == UHQ_RATE;
     g_in_rate = g_true96 ? UHQ_RATE : SSCS_SAMPLE_RATE;
+    g_in32 = g_true96 && g_opt_pcm_bits == 32;
+    g_pcmf_n = 0;
     if (g_uhq && !g_true96) up_init();
     g_in_frame = g_true96 ? SSC_ENC_FRAME_SAMPLES : g_uhq ? SSC_ENC_FRAME_SAMPLES / 2 : SSC_ENC_FRAME_SAMPLES;
     g_hist = g_uhq && !g_true96 ? UP_K : 0;
@@ -191,6 +200,42 @@ int sscs_tick(uint64_t now_us) {
     uint64_t want_e6 = dt * (uint64_t)g_in_rate + g_frac;
     int want = (int)(want_e6 / 1000000);
     g_frac = want_e6 % 1000000;
+    if (g_in32) {
+        if (want > PCM_CAP - g_pcmf_n) want = PCM_CAP - g_pcmf_n;
+        if (want > 0) {
+            uint32_t len = (uint32_t)want * (CH * 4);
+            uint8_t *dst = reinterpret_cast<uint8_t *>(g_raw32);
+            uint32_t got = g_read(dst, len);
+            if (got == 0) {
+                g_st.underflows++;
+                return 0;
+            }
+            if (got > len) got = len;
+            if (got < len) {
+                g_st.underflows++;
+                memset(dst + got, 0, len - got);
+            }
+            g_bytes_read += got;
+            const float sc = 1.0f / 2147483648.0f;
+            for (int i = 0; i < want * CH; i++) g_pcmf[g_pcmf_n * CH + i] = (float)g_raw32[i] * sc;
+            g_pcmf_n += want;
+        }
+        int sent32 = 0;
+        while (g_pcmf_n >= g_in_frame) {
+            uint8_t *dst = g_frames + g_pending * g_frame_bytes;
+            int r = ssc_encode_float(g_enc, g_pcmf, g_bitrate, 0, dst, g_frame_bytes);
+            g_pcmf_n -= g_in_frame;
+            memmove(g_pcmf, g_pcmf + g_in_frame * CH, (size_t)g_pcmf_n * CH * sizeof(float));
+            if (r != g_frame_bytes) continue;
+            g_st.frames++;
+            if (++g_pending == g_fpp) {
+                int s = send_packet();
+                if (s < 0) return sent32;
+                sent32 += s;
+            }
+        }
+        return sent32;
+    }
     if (want > PCM_CAP - g_pcm_n) want = PCM_CAP - g_pcm_n;
 
     if (want > 0) {

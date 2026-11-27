@@ -1,6 +1,6 @@
 id=openssc_probe
 name=OpenSSC Probe
-version=0.5.7
-versionCode=24
+version=0.5.8
+versionCode=25
 author=OpenSSC
 description=Stage 3: log-only hooks; with the enable_translate file also rewrites SSC<->Opus and mutes frames. Off by default.

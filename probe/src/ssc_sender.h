@@ -31,6 +31,8 @@ void sscs_set_mode(int uhq);
 void sscs_set_bitrate(int bps);
 /* Input PCM rate the stack delivers: 96000 with UHQ means true 96 kHz input (no upsampling); anything else is 48 kHz. */
 void sscs_set_pcm_rate(int hz);
+/* With true 96 kHz input: 32 means the stack delivers 32-bit PCM (8 bytes per stereo frame); anything else is 16-bit. */
+void sscs_set_pcm_bits(int bits);
 
 /* Prepares a stream. Returns frames per packet (>= 1) or a negative value (then nothing is sent). */
 int sscs_start(sscs_read_fn read, sscs_enqueue_fn enqueue, sscs_alloc_fn alloc, uint16_t peer_mtu);

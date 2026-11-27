@@ -201,6 +201,10 @@ tests/run.sh
 
 - Fix: the `ssc_pcm_hz` override was applied to every codec, so after a fallback to SBC the stream was fed 96 kHz data and played slowly. The override now applies only while the SSC configuration is active and the codec source rate is 48 kHz, and the sender uses true 96 kHz input only when the override really took effect.
 
-### Status of `ssc_pcm_hz=96000` (experimental, off by default)
+### Status of `ssc_pcm_hz=96000` (experimental, off by default; with `ssc_pcm_bits=32` it is stable, see 0.5.8)
 
 It reports 96 kHz to the audio HAL, so AudioFlinger delivers true 96 kHz PCM and the sender encodes it without upsampling. It worked in a first test, but later runs looped (about 0.9 s of playback, then AudioFlinger releases the A2DP patch and restarts), with every player. Without the file, UHQ 584 kb/s (Android resampling plus the built-in 2x upsampler) is stable and is the recommended setup (`ssc_uhq` only). Also keep "optional codecs" enabled in Developer options; toggling it off and on is the known fix when the stream starts looping.
+
+## 0.5.8
+
+- Experimental `ssc_pcm_bits` file (value 32, only together with `ssc_pcm_hz=96000`): also asks the audio HAL for 32-bit PCM, as the Samsung stack does (864 samples x 2 channels x 4 bytes = 6912 bytes per 9 ms frame). The sender reads int32 and encodes from floats. Off by default.

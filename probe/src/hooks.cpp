@@ -27,6 +27,7 @@ static volatile unsigned g_sends, g_interval_calls;
 static volatile int g_stream_armed;
 static volatile long g_stream_armed_at;
 static volatile int g_translate;     /* set once before install */
+static volatile int g_pcm_bits_applied; /* 32 if the bits override was written */
 static volatile int g_pcm_applied;   /* rate written by the last getHalPcmConfiguration call, 0 if untouched */
 static volatile int g_ssc_active;    /* the configuration we last built was rewritten to SSC: mute frames */
 static volatile long g_caps_seen_at; /* CLOCK_MONOTONIC seconds of the last SSC capability rewrite, 0 = never */
@@ -220,7 +221,8 @@ static void h_init(const void *peer, void *cfg, void *read_cb, void *enq_cb) {
     g_ssc_streaming = 0;
     if (g_translate && g_ssc_active && g_ssc_audio) {
         uint16_t mtu = pp ? (uint16_t)(pp[2] | (pp[3] << 8)) : 0;
-        sscs_set_pcm_rate(g_pcm_applied); /* true 96 kHz input only if the PCM rate override really took effect */
+        sscs_set_pcm_rate(g_pcm_applied);
+        sscs_set_pcm_bits(g_pcm_bits_applied); /* true 96 kHz input only if the PCM rate override really took effect */
         int r = g_osi_malloc ? sscs_start(reinterpret_cast<sscs_read_fn>(read_cb), reinterpret_cast<sscs_enqueue_fn>(enq_cb),
                                          g_osi_malloc, mtu)
                              : -9;
@@ -383,7 +385,8 @@ static uintptr_t h_ocpeer(void *self, uintptr_t a1, uintptr_t a2, uintptr_t a3) 
 /* bool codec::getHalPcmConfiguration(const ahal_codec_configuration&, PcmConfiguration* out): the PCM format of the
  * stack for the audio HAL (sampleRateHz at +0, channelMode +4, bitsPerSample +5, dataIntervalUs +8). The A2DP output
  * thread follows what is reported here (dynamic rates), so overriding the rate changes what AudioFlinger delivers. */
-static volatile int g_pcm_hz;
+static volatile int g_pcm_hz, g_pcm_bits;
+void hooks_set_pcm_bits(int bits) { g_pcm_bits = bits; }
 void hooks_set_pcm_hz(int hz) { g_pcm_hz = hz; }
 typedef uintptr_t (*hpcm_t)(const void *, void *);
 static hpcm_t o_hpcm;
@@ -391,6 +394,7 @@ static uintptr_t h_hpcm(const void *cfg, void *out) {
     uintptr_t r = o_hpcm(cfg, out);
     int hz = g_pcm_hz;
     g_pcm_applied = 0;
+    g_pcm_bits_applied = 0;
     /* Only while the SSC (Opus slot) configuration is the active one, and only when the stack describes a 48 kHz
      * source (sample rate enum 2 at +0x48 of the codec configuration, which Opus always is). A fallback codec such as
      * SBC must keep its own rate, or it would be fed 96 kHz data and play slowly. */
@@ -402,6 +406,11 @@ static uintptr_t h_hpcm(const void *cfg, void *out) {
         int32_t now = hz;
         memcpy(out, &now, 4);
         g_pcm_applied = hz;
+        if (g_pcm_bits == 32 && hz == 96000) {
+            static_cast<uint8_t *>(out)[5] = 32; /* bitsPerSample, as the Samsung stack asks for (6912-byte frames) */
+            g_pcm_bits_applied = 32;
+            hlog("PCM config: bits per sample -> 32");
+        }
         hlog("PCM config: sample rate %d -> %d Hz for the audio HAL", before, now);
     }
     return r;
