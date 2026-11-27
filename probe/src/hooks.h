@@ -18,6 +18,7 @@ void hooks_set_ssc_audio(int on);
 void hooks_set_ssc_interval(int ms);
 /* SSC configuration byte sent to the Buds (default 0x0C HiFi 48 kHz; 0x0A = UHQ 96 kHz). */
 void hooks_set_ssc_config(int byte);
+void hooks_set_pcm_hz(int hz); /* 0 = leave the PCM sample rate of the stack alone */
 
 /* Call before hooks_install (translate mode). Remembers across restarts that an SSC peer exists: a sighting
  * younger than 24 h arms AAC hiding at once, which a fresh connection needs because the AAC capability list is

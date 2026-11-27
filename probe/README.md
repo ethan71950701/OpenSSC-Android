@@ -187,3 +187,20 @@ tests/run.sh
 
 - The SSC display name no longer depends on start-up order. The constructor hook only sees configs built after it is installed; `A2dpCodecConfigOpusBase::setCodecConfig` and `setPeerCodecCapabilities` now also rename an already existing Opus config in place (codec index at +0x30, name string at +0x40).
 - Note: SSC streaming needs "optional codecs" enabled in Developer options. With it disabled, the framework stops the stream about every 1.5 s.
+
+## 0.5.5
+
+- Diagnostics only. Diag lines for names containing `Pcm`, `setup_codec`, `UpdateAudioConfig` or `StartSession` also dump 48 bytes at the first two arguments (read through process_vm_readv, so a bad pointer cannot crash). Used to find the sample rate the stack hands the audio HAL, as groundwork for a real 96 kHz path.
+
+## 0.5.6
+
+- New `ssc_pcm_hz` file (48000 or 96000; 96000 needs `ssc_uhq`). The stack reported 44100 Hz for the A2DP PCM although the encoder assumed 48 kHz, and AudioFlinger's A2DP thread follows the reported rate ("dynamic rates"). The `getHalPcmConfiguration` hook now overwrites the sample rate with the file's value. With 96000 the sender takes the PCM as true 96 kHz (no upsampling).
+- Delete the file and toggle Bluetooth to go back to the previous behaviour.
+
+## 0.5.7
+
+- Fix: the `ssc_pcm_hz` override was applied to every codec, so after a fallback to SBC the stream was fed 96 kHz data and played slowly. The override now applies only while the SSC configuration is active and the codec source rate is 48 kHz, and the sender uses true 96 kHz input only when the override really took effect.
+
+### Status of `ssc_pcm_hz=96000` (experimental, off by default)
+
+It reports 96 kHz to the audio HAL, so AudioFlinger delivers true 96 kHz PCM and the sender encodes it without upsampling. It worked in a first test, but later runs looped (about 0.9 s of playback, then AudioFlinger releases the A2DP patch and restarts), with every player. Without the file, UHQ 584 kb/s (Android resampling plus the built-in 2x upsampler) is stable and is the recommended setup (`ssc_uhq` only). Also keep "optional codecs" enabled in Developer options; toggling it off and on is the known fix when the stream starts looping.

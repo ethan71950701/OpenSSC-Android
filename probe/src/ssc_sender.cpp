@@ -46,6 +46,8 @@ static uint32_t g_ts;
 void sscs_set_mode(int uhq) { g_opt_uhq = uhq; }
 static int g_opt_bitrate;
 void sscs_set_bitrate(int bps) { g_opt_bitrate = bps; }
+static int g_opt_pcm_hz, g_in_rate = SSCS_SAMPLE_RATE, g_true96;
+void sscs_set_pcm_rate(int hz) { g_opt_pcm_hz = hz; }
 
 static void up_init(void) {
     double sum = 0;
@@ -123,9 +125,12 @@ int sscs_start(sscs_read_fn read, sscs_enqueue_fn enqueue, sscs_alloc_fn alloc, 
     g_enc = *slot;
     if (!g_enc) return -2;
     ssc_encoder_reset(g_enc);
-    if (g_uhq) up_init();
-    g_in_frame = g_uhq ? SSC_ENC_FRAME_SAMPLES / 2 : SSC_ENC_FRAME_SAMPLES;
-    g_hist = g_uhq ? UP_K : 0;
+    /* True 96 kHz input (UHQ only): the stack hands over 96 kHz PCM, so no upsampling. Otherwise the input is 48 kHz. */
+    g_true96 = g_uhq && g_opt_pcm_hz == UHQ_RATE;
+    g_in_rate = g_true96 ? UHQ_RATE : SSCS_SAMPLE_RATE;
+    if (g_uhq && !g_true96) up_init();
+    g_in_frame = g_true96 ? SSC_ENC_FRAME_SAMPLES : g_uhq ? SSC_ENC_FRAME_SAMPLES / 2 : SSC_ENC_FRAME_SAMPLES;
+    g_hist = g_uhq && !g_true96 ? UP_K : 0;
     g_bitrate = g_opt_bitrate > 0 ? g_opt_bitrate : g_uhq ? UHQ_BITRATE : SSCS_BITRATE;
     g_frame_bytes = ssc_encoder_frame_bytes(g_uhq ? UHQ_RATE : SSCS_SAMPLE_RATE, g_bitrate);
     if (g_frame_bytes <= 0) return -3;
@@ -183,7 +188,7 @@ int sscs_tick(uint64_t now_us) {
     uint64_t dt = g_last_us && now_us > g_last_us ? now_us - g_last_us : 20000;
     if (dt > MAX_TICK_US) dt = MAX_TICK_US;
     g_last_us = now_us;
-    uint64_t want_e6 = dt * SSCS_SAMPLE_RATE + g_frac;
+    uint64_t want_e6 = dt * (uint64_t)g_in_rate + g_frac;
     int want = (int)(want_e6 / 1000000);
     g_frac = want_e6 % 1000000;
     if (want > PCM_CAP - g_pcm_n) want = PCM_CAP - g_pcm_n;
@@ -211,7 +216,11 @@ int sscs_tick(uint64_t now_us) {
         if (g_trace_n < TRACE_CAP) g_trace[g_trace_n++] = level_char(in, g_in_frame * CH);
         uint8_t *dst = g_frames + g_pending * g_frame_bytes;
         int r;
-        if (g_uhq) {
+        if (g_true96) {
+            const float sc = 1.0f / 32768.0f;
+            for (int i = 0; i < g_in_frame * CH; i++) g_up[i] = in[i] * sc;
+            r = ssc_encode_float(g_enc, g_up, g_bitrate, 0, dst, g_frame_bytes);
+        } else if (g_uhq) {
             upsample2(in, g_in_frame, g_up);
             r = ssc_encode_float(g_enc, g_up, g_bitrate, 0, dst, g_frame_bytes);
         } else {

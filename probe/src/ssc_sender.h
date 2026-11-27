@@ -29,6 +29,8 @@ void sscs_set_mode(int uhq);
 /* Bitrate in b/s for the next stream (0: mode default). Buds 3 Pro accept 88k-229k at 48 kHz and 152k/291k/584k
  * in UHQ (per brunofgmag/SamsungScalableCodec-linux firmware notes); others are refused by sscs_start (-3). */
 void sscs_set_bitrate(int bps);
+/* Input PCM rate the stack delivers: 96000 with UHQ means true 96 kHz input (no upsampling); anything else is 48 kHz. */
+void sscs_set_pcm_rate(int hz);
 
 /* Prepares a stream. Returns frames per packet (>= 1) or a negative value (then nothing is sent). */
 int sscs_start(sscs_read_fn read, sscs_enqueue_fn enqueue, sscs_alloc_fn alloc, uint16_t peer_mtu);

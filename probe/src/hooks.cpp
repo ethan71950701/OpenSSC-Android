@@ -27,6 +27,7 @@ static volatile unsigned g_sends, g_interval_calls;
 static volatile int g_stream_armed;
 static volatile long g_stream_armed_at;
 static volatile int g_translate;     /* set once before install */
+static volatile int g_pcm_applied;   /* rate written by the last getHalPcmConfiguration call, 0 if untouched */
 static volatile int g_ssc_active;    /* the configuration we last built was rewritten to SSC: mute frames */
 static volatile long g_caps_seen_at; /* CLOCK_MONOTONIC seconds of the last SSC capability rewrite, 0 = never */
 #define CONFIG_WINDOW_S 1800         /* capability exchange happens at connect; a codec change picked later (developer options) still needs it */
@@ -219,6 +220,7 @@ static void h_init(const void *peer, void *cfg, void *read_cb, void *enq_cb) {
     g_ssc_streaming = 0;
     if (g_translate && g_ssc_active && g_ssc_audio) {
         uint16_t mtu = pp ? (uint16_t)(pp[2] | (pp[3] << 8)) : 0;
+        sscs_set_pcm_rate(g_pcm_applied); /* true 96 kHz input only if the PCM rate override really took effect */
         int r = g_osi_malloc ? sscs_start(reinterpret_cast<sscs_read_fn>(read_cb), reinterpret_cast<sscs_enqueue_fn>(enq_cb),
                                          g_osi_malloc, mtu)
                              : -9;
@@ -378,6 +380,33 @@ static uintptr_t h_ocpeer(void *self, uintptr_t a1, uintptr_t a2, uintptr_t a3) 
     return o_ocpeer(self, a1, a2, a3);
 }
 
+/* bool codec::getHalPcmConfiguration(const ahal_codec_configuration&, PcmConfiguration* out): the PCM format of the
+ * stack for the audio HAL (sampleRateHz at +0, channelMode +4, bitsPerSample +5, dataIntervalUs +8). The A2DP output
+ * thread follows what is reported here (dynamic rates), so overriding the rate changes what AudioFlinger delivers. */
+static volatile int g_pcm_hz;
+void hooks_set_pcm_hz(int hz) { g_pcm_hz = hz; }
+typedef uintptr_t (*hpcm_t)(const void *, void *);
+static hpcm_t o_hpcm;
+static uintptr_t h_hpcm(const void *cfg, void *out) {
+    uintptr_t r = o_hpcm(cfg, out);
+    int hz = g_pcm_hz;
+    g_pcm_applied = 0;
+    /* Only while the SSC (Opus slot) configuration is the active one, and only when the stack describes a 48 kHz
+     * source (sample rate enum 2 at +0x48 of the codec configuration, which Opus always is). A fallback codec such as
+     * SBC must keep its own rate, or it would be fed 96 kHz data and play slowly. */
+    int32_t src_rate = 0;
+    if (cfg) memcpy(&src_rate, static_cast<const uint8_t *>(cfg) + 0x48, 4);
+    if (g_translate && g_ssc_active && src_rate == 2 && hz > 0 && out && (r & 0xff)) {
+        int32_t before;
+        memcpy(&before, out, 4);
+        int32_t now = hz;
+        memcpy(out, &now, 4);
+        g_pcm_applied = hz;
+        hlog("PCM config: sample rate %d -> %d Hz for the audio HAL", before, now);
+    }
+    return r;
+}
+
 static void h_mtu(uintptr_t handle, const void *addr, uint16_t mtu) {
     hlog("bta_av_co_audio_update_mtu mtu=%u", mtu); /* address deliberately not logged */
     o_mtu(handle, addr, mtu);
@@ -407,6 +436,7 @@ static hook_def g_defs[] = {
     {"_ZN15A2dpCodecConfigC2E23btav_a2dp_codec_index_tN9bluetooth4a2dp7CodecIdERKNSt3__112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEE26btav_a2dp_codec_priority_t", 0, (void *)h_ccfg, (void **)&o_ccfg, nullptr},
     {"A2dpCodecConfigOpusBase::setCodecConfig", 0, (void *)h_ocset, (void **)&o_ocset, nullptr},
     {"A2dpCodecConfigOpusBase::setPeerCodecCapabilities", 0, (void *)h_ocpeer, (void **)&o_ocpeer, nullptr},
+    {"bluetooth::audio::aidl::a2dp::codec::getHalPcmConfiguration", 0, (void *)h_hpcm, (void **)&o_hpcm, nullptr},
     {"A2DP_VendorBuildCodecHeader", 0, (void *)h_bhdr, (void **)&o_bhdr, nullptr},
 };
 #define DEF_COUNT (sizeof(g_defs) / sizeof(g_defs[0]))

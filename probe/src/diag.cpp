@@ -1,6 +1,9 @@
 #include "diag.h"
 
 #include <string.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <unistd.h>
 
 #include "hooks.h"
 #include "shadowhook.h"
@@ -14,6 +17,28 @@ static fn6_t g_slot_orig[DIAG_MAX];
 static void *g_slot_stub[DIAG_MAX];
 static volatile unsigned g_slot_calls[DIAG_MAX];
 
+/* Reads up to len bytes at an arbitrary pointer without risking a crash (process_vm_readv on ourselves reports EFAULT
+ * instead of faulting). Used to look inside config structs passed by reference. */
+static size_t safe_read(uintptr_t p, void *out, size_t len) {
+    p &= 0x00ffffffffffffffULL; /* drop the heap tag byte */
+    if (p < 0x10000) return 0;
+    struct iovec l = {out, len}, r = {(void *)p, len};
+    long n = syscall(SYS_process_vm_readv, getpid(), &l, 1, &r, 1, 0);
+    return n > 0 ? (size_t)n : 0;
+}
+static void dump_mem(const char *name, int idx, uintptr_t p) {
+    unsigned char b[48];
+    size_t n = safe_read(p, b, sizeof b);
+    if (!n) return;
+    char hex[sizeof b * 2 + 1];
+    hooks_hex(b, n, hex, sizeof hex);
+    hooks_log("DIAG   %s arg%d mem[0..%zu]=%s", name, idx, n, hex);
+}
+static bool wants_mem(const char *name) {
+    return strstr(name, "Pcm") || strstr(name, "setup_codec") || strstr(name, "UpdateAudioConfig") ||
+           strstr(name, "StartSession");
+}
+
 template <int N>
 static uintptr_t slot_hook(uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t a4, uintptr_t a5) {
     uintptr_t r = g_slot_orig[N](a0, a1, a2, a3, a4, a5);
@@ -22,6 +47,10 @@ static uintptr_t slot_hook(uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t a
         hooks_log("DIAG %s(%llx,%llx,%llx,%llx,%llx,%llx) -> %llx", g_slot_name[N], (unsigned long long)a0,
                   (unsigned long long)a1, (unsigned long long)a2, (unsigned long long)a3, (unsigned long long)a4,
                   (unsigned long long)a5, (unsigned long long)r);
+    if (c < DIAG_MAX_LINES_PER_SLOT && wants_mem(g_slot_name[N])) {
+        dump_mem(g_slot_name[N], 0, a0);
+        dump_mem(g_slot_name[N], 1, a1);
+    }
     return r;
 }
 
