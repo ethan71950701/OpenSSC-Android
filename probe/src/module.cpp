@@ -23,7 +23,7 @@
 #include "zygisk.hpp"
 
 #define TAG "OpenSSCProbe"
-#define VERSION "0.4.3"
+#define VERSION "0.5.4"
 #define TARGET_PROCESS "com.android.bluetooth"
 #define TARGET_UID 1002
 #define TARGET_LIB "libbluetooth_jni.so"
@@ -33,9 +33,9 @@
 #define HOOKLOG_FILE DATA_DIR "/openssc_probe_hooklog.txt"
 #define STREAM_STATE_FILE DATA_DIR "/openssc_probe_stream_state"
 #define WAIT_SECONDS 120
-#define SURVIVE_SECONDS 60
+#define SURVIVE_SECONDS 15 /* was 60: quick Bluetooth off/on cycles during testing locked the probe */
 
-#define BASE_TARGETS 38
+#define BASE_TARGETS 41
 static sr_target g_targets[BASE_TARGETS + DIAG_MAX] = {
     /* required by the first hook version */
     {"avdt_msg_prs_cfg", 1},
@@ -77,6 +77,10 @@ static sr_target g_targets[BASE_TARGETS + DIAG_MAX] = {
     {"bta_av_co_audio_update_mtu", 0},
     {"A2dpCodecs::setCodecUserConfig", 0},
     {"osi_malloc", 0},
+    /* A2dpCodecConfig::A2dpCodecConfig(index, CodecId, const std::string& name, priority) (base constructor) */
+    {"_ZN15A2dpCodecConfigC2E23btav_a2dp_codec_index_tN9bluetooth4a2dp7CodecIdERKNSt3__112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEE26btav_a2dp_codec_priority_t", 0},
+    {"A2dpCodecConfigOpusBase::setCodecConfig", 0},
+    {"A2dpCodecConfigOpusBase::setPeerCodecCapabilities", 0},
 };
 static size_t g_target_count = BASE_TARGETS; /* grows by the diagnostic names read from diag_targets.txt */
 #define TARGET_COUNT g_target_count
@@ -85,8 +89,18 @@ static size_t g_diag_count;
 
 static int g_report_fd = -1;
 static bool g_translate_allowed = false; /* enable_translate file present */
-static int g_ssc_ts_step = -1, g_ssc_fpp = 0; /* ssc_ts_step / ssc_fpp files (0.4.2 experiments) */
+static int g_ssc_ts_step = -1, g_ssc_fpp = 0, g_ssc_interval = 18, g_ssc_uhq = 0, g_ssc_kbps = 0; /* ssc_ts_step / ssc_fpp files (0.4.2 experiments) */
 static bool g_ssc_mute = false;
+
+/* Bitrates the Buds 3 Pro firmware accepts (frame length table in the Linux port's notes); anything else: default. */
+static int ssc_allowed_bps(int uhq, int kbps) {
+    static const int hifi[] = {88, 96, 128, 192, 229}, uhq_k[] = {152, 291, 584};
+    const int *t = uhq ? uhq_k : hifi;
+    int n = uhq ? 3 : 5;
+    for (int i = 0; i < n; i++)
+        if (t[i] == kbps) return kbps * 1000;
+    return 0;
+}
 
 /* Small decimal number from a module file; def when missing or unreadable. */
 static int read_int_file(int dir, const char *name, int def) {
@@ -260,6 +274,10 @@ static void *probe_thread(void *) {
         hooks_set_translate(g_translate_allowed);
         hooks_set_ssc_audio(!g_ssc_mute);
         sscs_set_options(g_ssc_ts_step, g_ssc_fpp);
+        hooks_set_ssc_interval(g_ssc_interval);
+        sscs_set_mode(g_ssc_uhq);
+        sscs_set_bitrate(ssc_allowed_bps(g_ssc_uhq, g_ssc_kbps));
+        hooks_set_ssc_config(g_ssc_uhq ? 0x0A : 0x0C);
         if (g_translate_allowed) hooks_set_seen_path(DATA_DIR "/openssc_probe_ssc_seen");
         __android_log_print(ANDROID_LOG_INFO, TAG, "translate mode: %s", g_translate_allowed ? (g_ssc_mute ? "ON (SSC<->Opus rewrite, frames muted)" : "ON (SSC<->Opus rewrite, SSC audio)") : "off (log only)");
         if (hooks_install(li.bias, g_targets, TARGET_COUNT, HOOKLOG_FILE, STREAM_STATE_FILE) == 0 && g_diag_count > 0)
@@ -313,6 +331,9 @@ public:
             g_ssc_mute = dir >= 0 && faccessat(dir, "ssc_mute", F_OK, 0) == 0;
             g_ssc_ts_step = read_int_file(dir, "ssc_ts_step", -1);
             g_ssc_fpp = read_int_file(dir, "ssc_fpp", 0);
+            g_ssc_uhq = dir >= 0 && faccessat(dir, "ssc_uhq", F_OK, 0) == 0;
+            g_ssc_kbps = read_int_file(dir, "ssc_kbps", 0);
+            g_ssc_interval = read_int_file(dir, "ssc_interval_ms", g_ssc_uhq ? 9 : 18); /* one frame per tick */
             g_hooks_allowed = dir >= 0 && faccessat(dir, "disable_hooks", F_OK, 0) != 0;
             if (dir >= 0) close(dir);
         }

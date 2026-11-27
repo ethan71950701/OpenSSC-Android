@@ -34,6 +34,9 @@ static const char *read_ident(const char *p, const char **id, size_t *n) {
 int sr_symbol_matches(const char *symbol, const char *name) {
     size_t name_len = strlen(name);
 
+    /* A mangled name (needed for constructors, which have no plain qualified spelling) must match exactly. */
+    if (strncmp(name, "_Z", 2) == 0) return strncmp(symbol, name, name_len) == 0 && suffix_ok(symbol + name_len);
+
     /* Split "a::b::c" into components (trailing part of the qualified name). */
     const char *cn[MAX_COMP];
     size_t cl[MAX_COMP];

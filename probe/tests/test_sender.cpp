@@ -20,12 +20,17 @@ static uint32_t rd(uint8_t *buf, uint32_t len) {
     }
     return len;
 }
-static int g_pk; static int g_want_fpp = 2; static uint32_t g_want_step = 1728; static uint32_t g_last_ts; static int g_first = 1; static size_t g_frames_total;
+static int g_uhq_test; static int g_pk; static int g_want_fpp = 2; static uint32_t g_want_step = 1728; static uint32_t g_last_ts; static int g_first = 1; static size_t g_frames_total;
 static bool eq(void *p, size_t frames, uint32_t bytes) {
     hdr *h = (hdr *)p;
     uint32_t ts; memcpy(&ts, h->data, 4);
-    assert(h->offset == SSCS_BUF_OFFSET && h->ls == g_want_fpp && (int)frames == g_want_fpp && h->len == 484 * g_want_fpp);
     const uint8_t *f = h->data + h->offset;
+    if (g_uhq_test) { /* UHQ: one 660-byte E-family frame, rate code E3 (low 5 bits 03) */
+        assert(h->offset == SSCS_BUF_OFFSET && h->ls == 1 && frames == 1 && h->len == 660);
+        assert(f[0] == 0xff && (f[1] & 0xf0) == 0xe0 && (f[3] & 0x1f) == 0x03);
+        g_pk++; free(p); return true;
+    }
+    assert(h->offset == SSCS_BUF_OFFSET && h->ls == g_want_fpp && (int)frames == g_want_fpp && h->len == 484 * g_want_fpp);
     assert(f[0] == 0xff && (f[1] & 0xf0) == 0xe0 && f[3] == 0xf3);       /* frame 1 header, rate code F3 = 192k */
     if (g_want_fpp == 2) assert(f[484] == 0xff && (f[485] & 0xf0) == 0xe0 && f[487] == 0xf3); /* frame 2 header */
     if (!g_first) assert(ts == g_last_ts + g_want_step);
@@ -63,6 +68,21 @@ int main() {
     assert(g_pk - before >= 20);
     sscs_set_options(-1, 0);
     assert(sscs_start(rd, eq, malloc, 1012) == 1); /* default: one frame per packet */
+    /* UHQ: 48 kHz in, 96 kHz / 584 kb/s out, 9 ms ticks -> about one packet per tick */
+    sscs_set_mode(1); g_uhq_test = 1; before = g_pk;
+    assert(sscs_start(rd, eq, malloc, 1012) == 1);
+    sscs_get_stats(&st);
+    assert(st.frame_bytes == 660 && st.sample_rate == 96000 && st.bitrate == 584000);
+    for (int i = 0; i < 222; i++) { sscs_tick(t); t += 9000; } /* 2 s */
+    printf("uhq: %d packets in 2 s\n", g_pk - before);
+    assert(g_pk - before >= 218 && g_pk - before <= 223);
+    sscs_set_mode(0); g_uhq_test = 0;
+    /* 229 kb/s at 48 kHz: 576-byte frames */
+    sscs_set_bitrate(229000);
+    assert(sscs_start(rd, eq, malloc, 1012) == 1);
+    sscs_get_stats(&st);
+    assert(st.frame_bytes == 576 && st.bitrate == 229000);
+    sscs_set_bitrate(0);
     sscs_stop();
     printf("sender test: OK\n");
     return 0;

@@ -11,6 +11,10 @@ int main(int argc, char **argv) {
     CHECK(sr_symbol_matches("avdt_msg_prs_cfg", "avdt_msg_prs_cfg"));
     CHECK(sr_symbol_matches("avdt_msg_prs_cfg.llvm.123", "avdt_msg_prs_cfg"));
     CHECK(!sr_symbol_matches("avdt_msg_prs_cfg.cold", "avdt_msg_prs_cfg"));
+    /* exact mangled names (constructors) */
+    CHECK(sr_symbol_matches("_ZN15A2dpCodecConfigC2E23btav_a2dp_codec_index_t", "_ZN15A2dpCodecConfigC2E23btav_a2dp_codec_index_t"));
+    CHECK(!sr_symbol_matches("_ZN15A2dpCodecConfigC2E23btav_a2dp_codec_index_tx", "_ZN15A2dpCodecConfigC2E23btav_a2dp_codec_index_t"));
+    CHECK(!sr_symbol_matches("_ZN15A2dpCodecConfigC1E23btav_a2dp_codec_index_t", "_ZN15A2dpCodecConfigC2E23btav_a2dp_codec_index_t"));
     CHECK(!sr_symbol_matches("avdt_msg_prs_cfg2", "avdt_msg_prs_cfg"));
     CHECK(sr_symbol_matches("_Z16avdt_msg_prs_cfgP1Ah.llvm.9", "avdt_msg_prs_cfg"));
     CHECK(sr_symbol_matches("_ZL16avdt_msg_prs_cfgv", "avdt_msg_prs_cfg"));

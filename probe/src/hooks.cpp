@@ -15,7 +15,7 @@
 #include "translate.h"
 
 #define TAG "OpenSSCProbe"
-#define MAX_LOG_LINES 800
+#define MAX_LOG_LINES 4000
 #define CODEC_DUMP 20 /* AVDT_CODEC_SIZE in AOSP; the Xiaomi layout is unverified, so we only dump bytes */
 #define STREAM_OK_SENDS 1500 /* about 30 s of 20 ms ticks */
 
@@ -38,6 +38,10 @@ static volatile int g_ssc_audio = 1;
 static volatile int g_ssc_streaming; /* sender started for the current stream */
 static sscs_alloc_fn g_osi_malloc;   /* the stack's allocator: the stack frees our packets with osi_free */
 void hooks_set_ssc_audio(int on) { g_ssc_audio = on; }
+static int g_ssc_interval_ms = 18; /* one 864-sample frame per media tick at 48 kHz; 0 keeps the stack's 20 ms */
+void hooks_set_ssc_interval(int ms) { g_ssc_interval_ms = ms; }
+static int g_ssc_config = TR_SSC_CONFIG_BYTE; /* 0x0C HiFi 48 kHz, or 0x0A UHQ 96 kHz */
+void hooks_set_ssc_config(int byte) { g_ssc_config = byte; }
 
 static long mono_s(void) {
     struct timespec ts;
@@ -154,13 +158,13 @@ static void h_bld(uint8_t **pp, void *cfg) {
         /* Patch the bytes just written (not the stack's own structure): Opus config -> SSC config. */
         long seen = __atomic_load_n(&g_caps_seen_at, __ATOMIC_RELAXED);
         int recent = seen != 0 && mono_s() - seen <= CONFIG_WINDOW_S;
-        int n = recent ? tr_config_opus_to_ssc(start, (size_t)(*pp - start), TR_SSC_CONFIG_BYTE, nullptr) : 0;
+        int n = recent ? tr_config_opus_to_ssc(start, (size_t)(*pp - start), g_ssc_config, nullptr) : 0;
         if (n > 0) {
             g_ssc_active = 1;
             char hx[2 * 64 + 1];
             hooks_hex(start, (size_t)(*pp - start) < 64 ? (size_t)(*pp - start) : 64, hx, sizeof(hx));
             hlog("TRANSLATE config: %d Opus element(s) -> SSC 0x%02x, frames muted from now: %s", n,
-                 TR_SSC_CONFIG_BYTE, hx);
+                 g_ssc_config, hx);
         } else {
             /* Not a rewritten SSC configuration: if it is a config for another codec, unmute. */
             int is_other = 0;
@@ -222,8 +226,8 @@ static void h_init(const void *peer, void *cfg, void *read_cb, void *enq_cb) {
             g_ssc_streaming = 1;
             sscs_stats st;
             sscs_get_stats(&st);
-            hlog("SSC audio ON: %d kb/s, frame %d bytes, %d frames per packet, ts step %d, mtu %u", SSCS_BITRATE / 1000,
-                 st.frame_bytes, st.frames_per_packet, st.ts_step, mtu);
+            hlog("SSC audio ON: %d kb/s, %d Hz, frame %d bytes, %d frames per packet, ts step %d, mtu %u", st.bitrate / 1000,
+                 st.sample_rate, st.frame_bytes, st.frames_per_packet, st.ts_step, mtu);
         } else {
             hlog("SSC audio not started (%d): frames stay muted", r);
         }
@@ -261,8 +265,11 @@ static void h_flush(void) {
 static uint64_t h_interval(void) {
     uint64_t r = o_interval();
     unsigned n = __atomic_fetch_add(&g_interval_calls, 1, __ATOMIC_RELAXED);
-    if (n < 3) hlog("opus_get_encoder_interval_ms -> %llu", (unsigned long long)r);
-    return r;
+    /* SSC sends one frame per packet (Buds firmware rule). The stack moves at most one packet per media tick, so the
+     * tick must match the frame duration (18 ms) or the queue backs up and the stream gets suspended. */
+    uint64_t out = g_ssc_streaming && g_ssc_interval_ms > 0 ? (uint64_t)g_ssc_interval_ms : r;
+    if (n < 3) hlog("opus_get_encoder_interval_ms -> %llu%s", (unsigned long long)out, out != r ? " (SSC override)" : "");
+    return out;
 }
 static void h_send(uint64_t ts) {
     unsigned n = __atomic_fetch_add(&g_sends, 1, __ATOMIC_RELAXED) + 1;
@@ -270,7 +277,7 @@ static void h_send(uint64_t ts) {
     if (ssc && g_ssc_streaming) {
         int k = sscs_tick(ts);
         /* every 100 ticks (2 s): input level per frame, so gaps can be placed before or after the encoder */
-        if (n % 100 == 0 && n <= 3000) {
+        if (n % 250 == 0 && n <= 20000) {
             char tr[128];
             sscs_take_trace(tr, sizeof tr);
             hlog("SSC level #%u [%s]", n, tr);
@@ -322,6 +329,55 @@ static uintptr_t h_bhdr(const uint8_t *info, void *buf, uint16_t frames) {
     return o_bhdr(info, buf, frames);
 }
 
+/* Base constructor of every codec config: the name passed here is what the stack reports (dumpsys, the codec types
+ * handed to Java). In translate mode the Opus source slot (index 6) carries SSC, so it is named "SSC". */
+typedef void (*ccfg_t)(void *, int, uint64_t, const void *, int);
+static ccfg_t o_ccfg;
+static const char *g_codec_name = "SSC";
+static void h_ccfg(void *self, int index, uint64_t codec_id, const void *name, int prio) {
+    /* libc++ short string, as the caller builds it inline: byte 0 = size << 1, characters from byte 1. */
+    alignas(8) unsigned char ssc[24] = {0};
+    const unsigned char *n = static_cast<const unsigned char *>(name);
+    if (g_translate && index == 6 && n && n[0] == 8 && memcmp(n + 1, "Opus", 4) == 0) {
+        size_t len = strlen(g_codec_name);
+        ssc[0] = (unsigned char)(len << 1);
+        memcpy(ssc + 1, g_codec_name, len);
+        hlog("codec name: Opus slot reported as %s", g_codec_name);
+        o_ccfg(self, index, codec_id, ssc, prio);
+        return;
+    }
+    o_ccfg(self, index, codec_id, name, prio);
+}
+
+/* The constructor above runs once, when the stack builds its codec list. If that happens before these hooks are in,
+ * the Opus config object already exists with its original name. The two Opus config methods below run on every
+ * connect and codec change with that object as `self`, so rename it in place there. Layout (verified in the
+ * constructor): codec index at +0x30, libc++ std::string name at +0x40. */
+static void rename_opus_self(void *self) {
+    if (!g_translate || !self) return;
+    unsigned char *o = static_cast<unsigned char *>(self);
+    int32_t idx;
+    memcpy(&idx, o + 0x30, 4);
+    unsigned char *n = o + 0x40;
+    if (idx != 6 || n[0] != 8 || memcmp(n + 1, "Opus", 4) != 0) return;
+    size_t len = strlen(g_codec_name);
+    unsigned char ssc[24] = {0};
+    ssc[0] = (unsigned char)(len << 1);
+    memcpy(ssc + 1, g_codec_name, len);
+    memcpy(n, ssc, 24);
+    hlog("codec name: existing Opus config renamed to %s", g_codec_name);
+}
+typedef uintptr_t (*ocfg_t)(void *, uintptr_t, uintptr_t, uintptr_t);
+static ocfg_t o_ocset, o_ocpeer;
+static uintptr_t h_ocset(void *self, uintptr_t a1, uintptr_t a2, uintptr_t a3) {
+    rename_opus_self(self);
+    return o_ocset(self, a1, a2, a3);
+}
+static uintptr_t h_ocpeer(void *self, uintptr_t a1, uintptr_t a2, uintptr_t a3) {
+    rename_opus_self(self);
+    return o_ocpeer(self, a1, a2, a3);
+}
+
 static void h_mtu(uintptr_t handle, const void *addr, uint16_t mtu) {
     hlog("bta_av_co_audio_update_mtu mtu=%u", mtu); /* address deliberately not logged */
     o_mtu(handle, addr, mtu);
@@ -348,6 +404,9 @@ static hook_def g_defs[] = {
     {"a2dp_vendor_opus_send_frames", 1, (void *)h_send, (void **)&o_send, nullptr},
     {"bta_av_co_audio_update_mtu", 0, (void *)h_mtu, (void **)&o_mtu, nullptr},
     {"A2dpCodecs::setCodecUserConfig", 0, (void *)h_ucfg, (void **)&o_ucfg, nullptr},
+    {"_ZN15A2dpCodecConfigC2E23btav_a2dp_codec_index_tN9bluetooth4a2dp7CodecIdERKNSt3__112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEE26btav_a2dp_codec_priority_t", 0, (void *)h_ccfg, (void **)&o_ccfg, nullptr},
+    {"A2dpCodecConfigOpusBase::setCodecConfig", 0, (void *)h_ocset, (void **)&o_ocset, nullptr},
+    {"A2dpCodecConfigOpusBase::setPeerCodecCapabilities", 0, (void *)h_ocpeer, (void **)&o_ocpeer, nullptr},
     {"A2DP_VendorBuildCodecHeader", 0, (void *)h_bhdr, (void **)&o_bhdr, nullptr},
 };
 #define DEF_COUNT (sizeof(g_defs) / sizeof(g_defs[0]))

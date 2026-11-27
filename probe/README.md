@@ -92,7 +92,7 @@ adb shell "su -c 'cat /data/user_de/0/com.android.bluetooth/openssc_probe_hooklo
   `avdt_msg_bld_cfg wrote N bytes: ...`（棧實際送出的 Set Configuration 內容）。
 - 播放時應出現 `opus_encoder_init`、`opus_send_frames #1/#2/#3`；目前 codec 是 AAC，
   所以**預期看不到** Opus 編碼器的行（Opus 槽位沒被選中）。要看到它們，需要先啟用 Opus 槽位並重開機（見 `docs/HANDOFF.md` 第 4 節）。
-- 正常情況下約 60 秒後日誌會出現 `crash counter reset`。
+- 正常情況下約 15 秒後（0.4.6 起；之前是 60 秒）日誌會出現 `crash counter reset`。
 
 ## 停用
 
@@ -119,7 +119,7 @@ adb shell "su -c 'touch /data/adb/modules/openssc_probe/disable_hooks'"
 - **串流閃退計數**：串流開始（`encoder_init`）時記一次，行程撐過 60 秒、或正常停止後歸零（0.3.4 起；0.3.3 以前沒有實際播放就不會歸零，會累積到鎖死 hook）。被鎖住時 `openssc_probe_report.txt` 最後會有 `hooks: not installed (stream crash limit ...)`，刪掉 `openssc_probe_stream_state` 即可。連續 3 次在串流中閃退，之後不再掛 hook
   （狀態檔 `openssc_probe_stream_state`，和下面的閃退計數放在同一個資料夾）。
 
-- **藍牙閃退計數**：藍牙行程連續 3 次沒撐到穩定（約 60 秒），之後不再執行。
+- **藍牙閃退計數**：藍牙行程連續 3 次沒撐到穩定（約 15 秒，0.4.6 起；之前 60 秒時快速關開藍牙會誤鎖），之後不再執行。
   短時間內手動重啟藍牙行程也會計入。重設指令：
 
 ```
@@ -175,4 +175,15 @@ tests/run.sh
 - 0.4.0：translate 模式下 SSC 設定生效時，`opus_send_frames` 不再靜音，改由 `ssc_sender` 讀取 48 kHz PCM，用開源編碼器（`third_party/samsung-ssc-encoder`，由 `scripts/fetch-upstream.sh` 下載）編成 192 kb/s 的 SSC 幀，照 Opus 編碼器的方式（`osi_malloc` 的 BT_HDR、時間戳放在 data[0..3]）交給協定堆疊；`A2DP_VendorBuildCodecHeader` 不加額外標頭。模組目錄放 `ssc_mute` 檔可恢復靜音。
 - 0.4.1：每 100 個 tick 記一行音量軌跡（`SSC level`），用來區分音源斷音與傳輸斷音。
 - 0.4.2：實驗用設定檔 `ssc_fpp`（每包幀數）和 `ssc_ts_step`（每幀 RTP 時間戳步進），只在藍牙程序啟動時讀取。
-- 0.4.3：**預設每包 1 幀。** 在小米 13 + Galaxy Buds 3 Pro 上，每包 2 幀會規律斷音（約響 0.7 秒、停 1.5 秒）；每包 1 幀（時間戳步進 864）播放正常（已驗證，連續約 2 分鐘）。
+- 0.4.3 曾把預設改成每包 1 幀，但這是誤判：每包 1 幀時 SSC 串流約 1 秒就結束，系統退回 AAC，之後聽到的「正常」其實是 AAC。
+- 0.4.4：預設改回每包 2 幀。每包 2 幀會規律斷音（約響 0.7 秒、停 1.5 秒），原因仍在查（待用 S25+ 的 btsnoop 比對）。
+- 0.4.5：依 Buds 3 Pro 韌體的規則（參考 brunofgmag/SamsungScalableCodec-linux 的反組譯筆記：48 kHz 時每個 A2DP 封包只能有一個 SSC 幀），預設改回每包 1 幀，並把回報給堆疊的媒體 tick 從 20 ms 改成 18 ms（一幀 864 樣本），讓每個 tick 剛好送一包。0.4.3 每包 1 幀時串流約 1.3 秒就被暫停又重啟，推測是 20 ms tick 每次只取一包、佇列持續累積（未驗證）。設定檔 `ssc_interval_ms`（0 = 不改）。
+- 0.5.0（實驗）：UHQ 模式。模組目錄放 `ssc_uhq` 檔時，設定位元組改送 `0x0A`（96 kHz），48 kHz PCM 經 2 倍半帶升頻（32 tap Blackman 視窗 sinc，20 kHz 以下誤差 < -63 dB）後以 96 kHz、584 kb/s 編碼（每幀 660 位元組、9 ms），每包 1 幀、媒體 tick 9 ms。音源仍是 48 kHz，所以 24 kHz 以上沒有內容；好處是較高的碼率。
+- 0.5.1：translate 模式下，把協定堆疊裡 Opus 編碼槽的名稱改成 `SSC`（攔 `A2dpCodecConfig` 的基底建構子，只改 index 6 且原名為 "Opus" 的那個）。影響原生層回報的名稱（dumpsys 的原生區段、交給 Java 的 codec type 名稱）。Java 的 `BluetoothCodecConfig.getCodecName()` 和第三方 App 用 codec type 編號自己對照的名稱改不到，仍會顯示 Opus。
+- 0.5.2：設定檔 `ssc_kbps` 指定碼率（kb/s）。HiFi 48 kHz 可用 88/96/128/192/229，UHQ（有 `ssc_uhq`）可用 152/291/584；其他值忽略。這些是 Buds 3 Pro 韌體認得的幀長度（參考 brunofgmag/SamsungScalableCodec-linux 的筆記）。
+- 0.5.3：日誌行數上限 800 -> 4000（多次重連時 800 行會寫滿，看不到後面的音量軌跡），音量軌跡改成每 250 個 tick 記一行。
+
+## 0.5.4
+
+- The SSC display name no longer depends on start-up order. The constructor hook only sees configs built after it is installed; `A2dpCodecConfigOpusBase::setCodecConfig` and `setPeerCodecCapabilities` now also rename an already existing Opus config in place (codec index at +0x30, name string at +0x40).
+- Note: SSC streaming needs "optional codecs" enabled in Developer options. With it disabled, the framework stops the stream about every 1.5 s.

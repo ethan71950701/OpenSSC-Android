@@ -23,6 +23,12 @@ typedef void *(*sscs_alloc_fn)(size_t size);
 /* Experiment knobs (0.4.2), applied by the next sscs_start. ts_step: RTP timestamp advance per frame (default 864,
  * negative keeps the default). max_fpp: frames per packet 1..4, still limited by the MTU (0 or out of range: default 1). */
 void sscs_set_options(int ts_step, int max_fpp);
+/* uhq = 1: the next stream is UHQ (config 0x0A): the 48 kHz PCM is upsampled 2x and encoded at 96 kHz, 584 kb/s
+ * (660-byte frames, 9 ms each). 0 (default): HiFi 48 kHz, 192 kb/s. */
+void sscs_set_mode(int uhq);
+/* Bitrate in b/s for the next stream (0: mode default). Buds 3 Pro accept 88k-229k at 48 kHz and 152k/291k/584k
+ * in UHQ (per brunofgmag/SamsungScalableCodec-linux firmware notes); others are refused by sscs_start (-3). */
+void sscs_set_bitrate(int bps);
 
 /* Prepares a stream. Returns frames per packet (>= 1) or a negative value (then nothing is sent). */
 int sscs_start(sscs_read_fn read, sscs_enqueue_fn enqueue, sscs_alloc_fn alloc, uint16_t peer_mtu);
@@ -36,7 +42,7 @@ void sscs_stop(void);
 
 struct sscs_stats {
     unsigned ticks, frames, packets, underflows, enqueue_failed;
-    int frame_bytes, frames_per_packet, ts_step;
+    int frame_bytes, frames_per_packet, ts_step, sample_rate, bitrate;
 };
 void sscs_get_stats(sscs_stats *out);
 
